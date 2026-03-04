@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import socket
 import sys
@@ -26,6 +27,7 @@ def main() -> None:
 @click.option("--host", type=str, default=None)
 @click.option("--port", type=int, default=None)
 @click.option("--upstream", type=str, default=None)
+@click.option("--e2e-upstream", type=str, default=None)
 @click.option("--tunnel", type=click.Choice([m.value for m in TunnelMode]), default=None)
 @click.option("--cloudflared-bin", type=str, default=None)
 @click.option("--log-level", type=click.Choice(["debug", "info", "warning", "error", "critical"]), default=None)
@@ -33,6 +35,7 @@ def serve_command(
     host: str | None,
     port: int | None,
     upstream: str | None,
+    e2e_upstream: str | None,
     tunnel: str | None,
     cloudflared_bin: str | None,
     log_level: str | None,
@@ -42,6 +45,7 @@ def serve_command(
         host=host,
         port=port,
         upstream=upstream,
+        e2e_upstream=e2e_upstream,
         tunnel=tunnel,
         cloudflared_bin=cloudflared_bin,
         log_level=log_level,
@@ -55,11 +59,55 @@ def serve_command(
     asyncio.run(_serve(settings))
 
 
+def _print_startup_hint(local_base_url: str) -> None:
+    click.echo("")
+    click.echo("chutes-e2ee-proxy is running.")
+    click.echo(f"Set your application's base_url to: {local_base_url}")
+    click.echo("")
+
+
+async def _watch_tunnel_hint(
+    settings: Settings,
+    tunnel_manager: TunnelManager,
+    local_base_url: str,
+) -> None:
+    if settings.tunnel is TunnelMode.OFF:
+        return
+
+    click.echo("Waiting for tunnel URL...")
+    printed_unavailable = False
+    while True:
+        snapshot = tunnel_manager.snapshot()
+        if snapshot.public_url:
+            click.echo("")
+            click.echo("Tunnel connected.")
+            click.echo(f"Set your application's base_url to: {snapshot.public_url}/v1")
+            click.echo(f"(Local fallback: {local_base_url})")
+            click.echo("")
+            return
+
+        if (
+            snapshot.status == "disconnected"
+            and snapshot.last_error
+            and not printed_unavailable
+        ):
+            click.echo(
+                f"Tunnel unavailable ({snapshot.last_error}). "
+                f"Continue using: {local_base_url}"
+            )
+            printed_unavailable = True
+            if settings.tunnel is not TunnelMode.REQUIRED:
+                return
+
+        await asyncio.sleep(0.5)
+
+
 async def _serve(settings: Settings) -> None:
     logger = logging.getLogger("chutes_e2ee_proxy.cli")
 
     pool = TransportPool(
         upstream=settings.upstream,
+        e2e_upstream=settings.e2e_upstream,
         max_size=settings.pool_max_size,
         idle_ttl=settings.pool_idle_ttl,
         cleanup_interval=settings.pool_cleanup_interval,
@@ -100,18 +148,29 @@ async def _serve(settings: Settings) -> None:
         extra={"fields": {"local_url": f"http://{settings.host}:{settings.port}"}},
     )
 
-    await server.serve()
+    local_base_url = f"http://{settings.host}:{settings.port}/v1"
+    _print_startup_hint(local_base_url)
+    tunnel_hint_task = asyncio.create_task(_watch_tunnel_hint(settings, tunnel_manager, local_base_url))
+
+    try:
+        await server.serve()
+    finally:
+        tunnel_hint_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await tunnel_hint_task
 
 
 @main.command("doctor")
 @click.option("--upstream", type=str, default=None)
+@click.option("--e2e-upstream", type=str, default=None)
 @click.option("--cloudflared-bin", type=str, default=None)
-def doctor_command(upstream: str | None, cloudflared_bin: str | None) -> None:
+def doctor_command(upstream: str | None, e2e_upstream: str | None, cloudflared_bin: str | None) -> None:
     """Run local environment diagnostics."""
     settings = Settings.from_cli(
         host=None,
         port=None,
         upstream=upstream,
+        e2e_upstream=e2e_upstream,
         tunnel=None,
         cloudflared_bin=cloudflared_bin,
         log_level=None,
@@ -152,6 +211,25 @@ def doctor_command(upstream: str | None, cloudflared_bin: str | None) -> None:
             checks.append(("WARN", "upstream_http", f"status={response.status_code}"))
     except Exception as exc:
         checks.append(("FAIL", "upstream_http", str(exc)))
+
+    e2e_host = settings.e2e_upstream.split("://", 1)[-1].split("/", 1)[0]
+    try:
+        with socket.create_connection((e2e_host, 443), timeout=5):
+            checks.append(("PASS", "e2e_tcp", f"{e2e_host}:443 reachable"))
+    except OSError as exc:
+        checks.append(("FAIL", "e2e_tcp", str(exc)))
+
+    try:
+        # No headers are intentional; 422 means endpoint exists and is routable.
+        response = httpx.post(f"{settings.e2e_upstream}/e2e/invoke", timeout=10, content=b"")
+        if response.status_code in {401, 403, 422}:
+            checks.append(("PASS", "e2e_http", f"status={response.status_code}"))
+        elif response.status_code < 500:
+            checks.append(("WARN", "e2e_http", f"status={response.status_code}"))
+        else:
+            checks.append(("WARN", "e2e_http", f"status={response.status_code}"))
+    except Exception as exc:
+        checks.append(("FAIL", "e2e_http", str(exc)))
 
     width = max(len(name) for _, name, _ in checks)
     for level, name, detail in checks:

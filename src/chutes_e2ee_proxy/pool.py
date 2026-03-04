@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import httpx
+
 
 @dataclass
 class _Entry:
@@ -17,12 +19,14 @@ class TransportPool:
     def __init__(
         self,
         upstream: str,
+        e2e_upstream: str,
         max_size: int = 64,
         idle_ttl: float = 300.0,
         cleanup_interval: float = 60.0,
-        transport_factory: Callable[[str, str], Any] | None = None,
+        transport_factory: Callable[[str, str, str], Any] | None = None,
     ):
         self._upstream = upstream
+        self._e2e_upstream = e2e_upstream
         self._max_size = max_size
         self._idle_ttl = idle_ttl
         self._cleanup_interval = cleanup_interval
@@ -34,10 +38,113 @@ class TransportPool:
         self._cleanup_task: asyncio.Task[None] | None = None
 
     @staticmethod
-    def _default_factory(api_key: str, upstream: str) -> Any:
+    def _default_factory(api_key: str, upstream: str, e2e_upstream: str) -> Any:
         from chutes_e2ee import AsyncChutesE2EETransport
+        from chutes_e2ee.discovery import DiscoveryManager, DiscoveryResult, InstanceInfo
 
-        return AsyncChutesE2EETransport(api_key=api_key, api_base=upstream)
+        if upstream == e2e_upstream:
+            return AsyncChutesE2EETransport(api_key=api_key, api_base=upstream)
+
+        class _DualBaseDiscoveryManager(DiscoveryManager):
+            def __init__(self, model_api_base: str, e2e_api_base: str, api_key: str):
+                super().__init__(api_base=model_api_base, api_key=api_key)
+                self._model_api_base = model_api_base.rstrip("/")
+                self._e2e_api_base = e2e_api_base.rstrip("/")
+
+            def _maybe_refresh_model_map(self, client: httpx.Client) -> None:
+                now = time.time()
+                if now - self._model_map_loaded_at < self._MODEL_MAP_TTL:
+                    return
+                with self._model_map_lock:
+                    if now - self._model_map_loaded_at < self._MODEL_MAP_TTL:
+                        return
+                    resp = client.get(
+                        f"{self._model_api_base}/v1/models",
+                        headers=self._auth_headers,
+                        timeout=15,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json().get("data", [])
+                    new_map: dict[str, str] = {}
+                    for entry in data:
+                        model_id = entry.get("id")
+                        chute_id = entry.get("chute_id")
+                        if model_id and chute_id:
+                            new_map[model_id] = chute_id
+                    self._model_map = new_map
+                    self._model_map_loaded_at = time.time()
+
+            async def _maybe_refresh_model_map_async(self, client: httpx.AsyncClient) -> None:
+                now = time.time()
+                if now - self._model_map_loaded_at < self._MODEL_MAP_TTL:
+                    return
+                resp = await client.get(
+                    f"{self._model_api_base}/v1/models",
+                    headers=self._auth_headers,
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                data = resp.json().get("data", [])
+                new_map: dict[str, str] = {}
+                for entry in data:
+                    model_id = entry.get("id")
+                    chute_id = entry.get("chute_id")
+                    if model_id and chute_id:
+                        new_map[model_id] = chute_id
+                self._model_map = new_map
+                self._model_map_loaded_at = time.time()
+
+            def _fetch_instances(self, chute_id: str, client: httpx.Client) -> DiscoveryResult:
+                resp = client.get(
+                    f"{self._e2e_api_base}/e2e/instances/{chute_id}",
+                    headers=self._auth_headers,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                instances = [
+                    InstanceInfo(
+                        instance_id=inst["instance_id"],
+                        e2e_pubkey=inst["e2e_pubkey"],
+                        nonces=list(inst["nonces"]),
+                    )
+                    for inst in data["instances"]
+                ]
+                return DiscoveryResult(
+                    instances=instances,
+                    nonce_expires_at=time.time() + data.get("nonce_expires_in", 55),
+                )
+
+            async def _fetch_instances_async(
+                self, chute_id: str, client: httpx.AsyncClient
+            ) -> DiscoveryResult:
+                resp = await client.get(
+                    f"{self._e2e_api_base}/e2e/instances/{chute_id}",
+                    headers=self._auth_headers,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                instances = [
+                    InstanceInfo(
+                        instance_id=inst["instance_id"],
+                        e2e_pubkey=inst["e2e_pubkey"],
+                        nonces=list(inst["nonces"]),
+                    )
+                    for inst in data["instances"]
+                ]
+                return DiscoveryResult(
+                    instances=instances,
+                    nonce_expires_at=time.time() + data.get("nonce_expires_in", 55),
+                )
+
+        transport = AsyncChutesE2EETransport(api_key=api_key, api_base=e2e_upstream)
+        transport._discovery = _DualBaseDiscoveryManager(
+            model_api_base=upstream,
+            e2e_api_base=e2e_upstream,
+            api_key=api_key,
+        )
+        return transport
 
     def start_cleanup_task(self) -> None:
         if self._cleanup_task is None:
@@ -69,7 +176,7 @@ class TransportPool:
                 oldest = self._pool.pop(oldest_key)
                 to_close.append(oldest.transport)
 
-            transport = self._transport_factory(api_key, self._upstream)
+            transport = self._transport_factory(api_key, self._upstream, self._e2e_upstream)
             self._pool[api_key] = _Entry(transport=transport, last_used=now)
 
         for transport in to_close:
@@ -125,4 +232,5 @@ class TransportPool:
             "size": len(self._pool),
             "max_size": self._max_size,
             "idle_ttl": self._idle_ttl,
+            "e2e_upstream_split": int(self._upstream != self._e2e_upstream),
         }

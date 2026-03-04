@@ -115,6 +115,7 @@ def create_app(
             {
                 "status": "ok",
                 "upstream": settings.upstream,
+                "e2e_upstream": settings.e2e_upstream,
                 "tunnel": {
                     "mode": snapshot.mode,
                     "status": snapshot.status,

@@ -86,7 +86,13 @@ install_proxy() {
     if uv tool install --upgrade chutes-e2ee-proxy </dev/null; then
       return 0
     fi
+    if uv tool install --upgrade --force chutes-e2ee-proxy </dev/null; then
+      return 0
+    fi
     if uv tool install --upgrade "$REPO_FALLBACK" </dev/null; then
+      return 0
+    fi
+    if uv tool install --upgrade --force "$REPO_FALLBACK" </dev/null; then
       return 0
     fi
     log "uv installation failed; falling back to pipx..."

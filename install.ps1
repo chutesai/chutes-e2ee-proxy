@@ -76,8 +76,12 @@ function Install-Proxy($pyExec) {
         Write-Log "Installing chutes-e2ee-proxy via uv..."
         uv tool install --upgrade chutes-e2ee-proxy 2>$null
         if ($LASTEXITCODE -eq 0) { return }
+        uv tool install --upgrade --force chutes-e2ee-proxy 2>$null
+        if ($LASTEXITCODE -eq 0) { return }
 
         uv tool install --upgrade $fallback 2>$null
+        if ($LASTEXITCODE -eq 0) { return }
+        uv tool install --upgrade --force $fallback 2>$null
         if ($LASTEXITCODE -eq 0) { return }
 
         Write-Log "uv installation failed; falling back to pipx..."

@@ -17,12 +17,12 @@ class FakeTransport:
 async def test_pool_reuses_transport_for_same_key() -> None:
     created: list[FakeTransport] = []
 
-    def factory(_api_key: str, _upstream: str) -> FakeTransport:
+    def factory(_api_key: str, _upstream: str, _e2e_upstream: str) -> FakeTransport:
         transport = FakeTransport()
         created.append(transport)
         return transport
 
-    pool = TransportPool("https://llm.chutes.ai", transport_factory=factory)
+    pool = TransportPool("https://llm.chutes.ai", "https://api.chutes.ai", transport_factory=factory)
     one = await pool.get("k1")
     two = await pool.get("k1")
 
@@ -36,12 +36,17 @@ async def test_pool_reuses_transport_for_same_key() -> None:
 async def test_pool_evicts_oldest_when_max_size_reached() -> None:
     created: list[FakeTransport] = []
 
-    def factory(_api_key: str, _upstream: str) -> FakeTransport:
+    def factory(_api_key: str, _upstream: str, _e2e_upstream: str) -> FakeTransport:
         transport = FakeTransport()
         created.append(transport)
         return transport
 
-    pool = TransportPool("https://llm.chutes.ai", max_size=2, transport_factory=factory)
+    pool = TransportPool(
+        "https://llm.chutes.ai",
+        "https://api.chutes.ai",
+        max_size=2,
+        transport_factory=factory,
+    )
 
     t1 = await pool.get("k1")
     await asyncio.sleep(0)
@@ -57,12 +62,17 @@ async def test_pool_evicts_oldest_when_max_size_reached() -> None:
 async def test_pool_cleanup_evicts_idle_entries() -> None:
     created: list[FakeTransport] = []
 
-    def factory(_api_key: str, _upstream: str) -> FakeTransport:
+    def factory(_api_key: str, _upstream: str, _e2e_upstream: str) -> FakeTransport:
         transport = FakeTransport()
         created.append(transport)
         return transport
 
-    pool = TransportPool("https://llm.chutes.ai", idle_ttl=0.0, transport_factory=factory)
+    pool = TransportPool(
+        "https://llm.chutes.ai",
+        "https://api.chutes.ai",
+        idle_ttl=0.0,
+        transport_factory=factory,
+    )
     _t1 = await pool.get("k1")
     await pool.cleanup()
 
@@ -75,12 +85,12 @@ async def test_pool_cleanup_evicts_idle_entries() -> None:
 async def test_pool_close_all_closes_every_transport() -> None:
     created: list[FakeTransport] = []
 
-    def factory(_api_key: str, _upstream: str) -> FakeTransport:
+    def factory(_api_key: str, _upstream: str, _e2e_upstream: str) -> FakeTransport:
         transport = FakeTransport()
         created.append(transport)
         return transport
 
-    pool = TransportPool("https://llm.chutes.ai", transport_factory=factory)
+    pool = TransportPool("https://llm.chutes.ai", "https://api.chutes.ai", transport_factory=factory)
     await pool.get("k1")
     await pool.get("k2")
 

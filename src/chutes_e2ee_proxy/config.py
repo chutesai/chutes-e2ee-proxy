@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import Enum
+from urllib.parse import urlparse
 
 
 class TunnelMode(str, Enum):
@@ -16,6 +17,7 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8787
     upstream: str = "https://llm.chutes.ai"
+    e2e_upstream: str = "https://api.chutes.ai"
     tunnel: TunnelMode = TunnelMode.AUTO
     cloudflared_bin: str | None = None
     log_level: str = "info"
@@ -40,6 +42,7 @@ class Settings:
         host: str | None,
         port: int | None,
         upstream: str | None,
+        e2e_upstream: str | None,
         tunnel: str | None,
         cloudflared_bin: str | None,
         log_level: str | None,
@@ -47,6 +50,11 @@ class Settings:
         resolved_host = cls._coalesce(host, "CHUTES_PROXY_HOST", "127.0.0.1")
         resolved_port = int(cls._coalesce(str(port) if port is not None else None, "CHUTES_PROXY_PORT", "8787"))
         resolved_upstream = cls._coalesce(upstream, "CHUTES_UPSTREAM", "https://llm.chutes.ai").rstrip("/")
+        resolved_e2e_upstream = cls._coalesce(
+            e2e_upstream,
+            "CHUTES_E2E_UPSTREAM",
+            cls._default_e2e_upstream_for(resolved_upstream),
+        ).rstrip("/")
         resolved_tunnel = cls._coalesce(tunnel, "CHUTES_PROXY_TUNNEL", "auto").lower()
         resolved_cloudflared = cls._coalesce(
             cloudflared_bin,
@@ -63,6 +71,8 @@ class Settings:
 
         if not resolved_upstream.startswith(("http://", "https://")):
             raise ValueError("upstream must start with http:// or https://")
+        if not resolved_e2e_upstream.startswith(("http://", "https://")):
+            raise ValueError("e2e_upstream must start with http:// or https://")
 
         if resolved_log_level not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError(f"Invalid log level: {resolved_log_level}")
@@ -71,7 +81,19 @@ class Settings:
             host=resolved_host,
             port=resolved_port,
             upstream=resolved_upstream,
+            e2e_upstream=resolved_e2e_upstream,
             tunnel=TunnelMode(resolved_tunnel),
             cloudflared_bin=resolved_cloudflared or None,
             log_level=resolved_log_level,
         )
+
+    @staticmethod
+    def _default_e2e_upstream_for(upstream: str) -> str:
+        parsed = urlparse(upstream)
+        host = parsed.hostname or ""
+        if host.startswith("llm."):
+            derived_host = f"api.{host[4:]}"
+            if parsed.port is not None:
+                derived_host = f"{derived_host}:{parsed.port}"
+            return f"{parsed.scheme}://{derived_host}"
+        return upstream

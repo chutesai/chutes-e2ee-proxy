@@ -57,6 +57,7 @@ Point your client `base_url` to that local URL (or the tunnel URL if enabled) an
 | `--host` | `CHUTES_PROXY_HOST` | `127.0.0.1` |
 | `--port` | `CHUTES_PROXY_PORT` | `8787` |
 | `--upstream` | `CHUTES_UPSTREAM` | `https://llm.chutes.ai` |
+| `--e2e-upstream` | `CHUTES_E2E_UPSTREAM` | auto-derived (`https://api.chutes.ai` for `llm.chutes.ai`) |
 | `--tunnel` | `CHUTES_PROXY_TUNNEL` | `auto` |
 | `--cloudflared-bin` | `CHUTES_CLOUDFLARED_BIN` | auto-detect |
 | `--log-level` | `CHUTES_LOG_LEVEL` | `info` |
@@ -86,6 +87,8 @@ Runs local checks for Python version, `chutes-e2ee` importability, cloudflared a
 3. Uses per-key pooled `AsyncChutesE2EETransport` instances.
 4. Streams upstream response bytes back to caller.
 5. Upstream 4xx/5xx pass through unchanged.
+
+`--upstream` is the client-facing OpenAI-compatible base (for example `https://llm.chutes.ai`), while `--e2e-upstream` is where `/e2e/*` is reached (for example `https://api.chutes.ai`).
 
 ## Development
 

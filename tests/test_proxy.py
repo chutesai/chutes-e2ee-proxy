@@ -83,6 +83,7 @@ def settings() -> Settings:
         host="127.0.0.1",
         port=8787,
         upstream="https://llm.chutes.ai",
+        e2e_upstream="https://api.chutes.ai",
         tunnel=TunnelMode.OFF,
     )
 
@@ -106,6 +107,7 @@ async def test_health_endpoint_reports_status(app) -> None:
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["upstream"] == "https://llm.chutes.ai"
+    assert payload["e2e_upstream"] == "https://api.chutes.ai"
     assert payload["tunnel"]["status"] == "off"
 
 
