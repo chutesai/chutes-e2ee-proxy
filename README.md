@@ -91,6 +91,15 @@ Runs local checks for Python version, `chutes-e2ee` importability, cloudflared a
 
 ```bash
 cd chutes-e2ee-proxy
+uv venv --python 3.12 --seed
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+uv pip install -e '.[dev]'
+pytest
+```
+
+Fallback without `uv`:
+
+```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'

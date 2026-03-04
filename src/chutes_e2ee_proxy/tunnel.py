@@ -68,8 +68,8 @@ class TunnelManager:
         if "windows" in system:
             candidates.extend(
                 [
-                    r"C:\\Program Files\\cloudflared\\cloudflared.exe",
-                    r"C:\\cloudflared\\cloudflared.exe",
+                    r"C:\Program Files\cloudflared\cloudflared.exe",
+                    r"C:\cloudflared\cloudflared.exe",
                 ]
             )
         else:
