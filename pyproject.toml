@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chutes-e2ee-proxy"
+version = "0.1.0"
+description = "Native E2EE proxy for Chutes"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Chutes AI" }]
+dependencies = [
+    "starlette>=0.37.0",
+    "uvicorn[standard]>=0.29.0",
+    "httpx>=0.25.0",
+    "chutes-e2ee>=0.1.0",
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+chutes-e2ee-proxy = "chutes_e2ee_proxy.cli:main"
+
+[project.urls]
+Homepage = "https://chutes.ai"
+Repository = "https://github.com/chutesai/chutes-e2ee-proxy"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chutes_e2ee_proxy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
