@@ -65,10 +65,44 @@ def serve_command(
     asyncio.run(_serve(settings))
 
 
-def _print_startup_hint(local_base_url: str) -> None:
+def _local_base_urls(settings: Settings) -> tuple[str, str]:
+    scheme = "https" if settings.tls_cert_file else "http"
+    bind_base_url = f"{scheme}://{settings.host}:{settings.port}/v1"
+    display_host = settings.host
+    if settings.host in {"127.0.0.1", "0.0.0.0", "::1"}:
+        display_host = "localhost"
+    display_base_url = f"{scheme}://{display_host}:{settings.port}/v1"
+    return display_base_url, bind_base_url
+
+
+def _print_node_tls_hint() -> None:
+    click.echo("Node/Cursor local TLS trust (only needed if your app reports TLS errors):")
+    click.echo("  macOS/Linux:")
+    click.echo('    export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"')
+    click.echo("    <your-app-command>")
+    click.echo("  PowerShell:")
+    click.echo('    $env:NODE_EXTRA_CA_CERTS = "$(mkcert -CAROOT)\\rootCA.pem"')
+    click.echo("    <your-app-command>")
+
+
+def _print_startup_hint(settings: Settings, local_base_url: str, bind_base_url: str) -> None:
     click.echo("")
     click.echo("chutes-e2ee-proxy is running.")
-    click.echo(f"Set your application's base_url to: {local_base_url}")
+    click.echo("")
+    click.echo("Local endpoint:")
+    click.echo(f"  base_url: {local_base_url}")
+    if bind_base_url != local_base_url:
+        click.echo(f"  bind_url:  {bind_base_url}")
+
+    if settings.tls_cert_file:
+        click.echo("")
+        _print_node_tls_hint()
+
+    if settings.tunnel is not TunnelMode.OFF:
+        click.echo("")
+        click.echo("Tunnel endpoint (recommended compatibility):")
+        click.echo("  waiting for cloudflared URL...")
+
     click.echo("")
 
 
@@ -86,9 +120,10 @@ async def _watch_tunnel_hint(
         snapshot = tunnel_manager.snapshot()
         if snapshot.public_url:
             click.echo("")
-            click.echo("Tunnel connected.")
-            click.echo(f"Set your application's base_url to: {snapshot.public_url}/v1")
-            click.echo(f"(Local fallback: {local_base_url})")
+            click.echo("Tunnel endpoint (recommended compatibility):")
+            click.echo(f"  base_url: {snapshot.public_url}/v1")
+            click.echo("Local fallback endpoint:")
+            click.echo(f"  base_url: {local_base_url}")
             click.echo("")
             return
 
@@ -97,10 +132,14 @@ async def _watch_tunnel_hint(
             and snapshot.last_error
             and not printed_unavailable
         ):
+            click.echo("")
             click.echo(
                 f"Tunnel unavailable ({snapshot.last_error}). "
-                f"Continue using: {local_base_url}"
+                f"Use local endpoint: {local_base_url}"
             )
+            if settings.tls_cert_file:
+                _print_node_tls_hint()
+            click.echo("")
             printed_unavailable = True
             if settings.tunnel is not TunnelMode.REQUIRED:
                 return
@@ -162,9 +201,8 @@ async def _serve(settings: Settings) -> None:
         },
     )
 
-    local_scheme = "https" if settings.tls_cert_file else "http"
-    local_base_url = f"{local_scheme}://{settings.host}:{settings.port}/v1"
-    _print_startup_hint(local_base_url)
+    local_base_url, bind_base_url = _local_base_urls(settings)
+    _print_startup_hint(settings, local_base_url, bind_base_url)
     tunnel_hint_task = asyncio.create_task(_watch_tunnel_hint(settings, tunnel_manager, local_base_url))
 
     try:
