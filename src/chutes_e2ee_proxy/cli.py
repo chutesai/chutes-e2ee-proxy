@@ -28,6 +28,8 @@ def main() -> None:
 @click.option("--port", type=int, default=None)
 @click.option("--upstream", type=str, default=None)
 @click.option("--e2e-upstream", type=str, default=None)
+@click.option("--tls-cert-file", type=click.Path(exists=True, dir_okay=False), default=None)
+@click.option("--tls-key-file", type=click.Path(exists=True, dir_okay=False), default=None)
 @click.option("--tunnel", type=click.Choice([m.value for m in TunnelMode]), default=None)
 @click.option("--cloudflared-bin", type=str, default=None)
 @click.option("--log-level", type=click.Choice(["debug", "info", "warning", "error", "critical"]), default=None)
@@ -36,6 +38,8 @@ def serve_command(
     port: int | None,
     upstream: str | None,
     e2e_upstream: str | None,
+    tls_cert_file: str | None,
+    tls_key_file: str | None,
     tunnel: str | None,
     cloudflared_bin: str | None,
     log_level: str | None,
@@ -46,6 +50,8 @@ def serve_command(
         port=port,
         upstream=upstream,
         e2e_upstream=e2e_upstream,
+        tls_cert_file=tls_cert_file,
+        tls_key_file=tls_key_file,
         tunnel=tunnel,
         cloudflared_bin=cloudflared_bin,
         log_level=log_level,
@@ -136,6 +142,8 @@ async def _serve(settings: Settings) -> None:
         app,
         host=settings.host,
         port=settings.port,
+        ssl_certfile=settings.tls_cert_file,
+        ssl_keyfile=settings.tls_key_file,
         log_config=None,
         access_log=False,
         lifespan="on",
@@ -145,10 +153,17 @@ async def _serve(settings: Settings) -> None:
 
     logger.info(
         "proxy listening",
-        extra={"fields": {"local_url": f"http://{settings.host}:{settings.port}"}},
+        extra={
+            "fields": {
+                "local_url": (
+                    f"{'https' if settings.tls_cert_file else 'http'}://{settings.host}:{settings.port}"
+                )
+            }
+        },
     )
 
-    local_base_url = f"http://{settings.host}:{settings.port}/v1"
+    local_scheme = "https" if settings.tls_cert_file else "http"
+    local_base_url = f"{local_scheme}://{settings.host}:{settings.port}/v1"
     _print_startup_hint(local_base_url)
     tunnel_hint_task = asyncio.create_task(_watch_tunnel_hint(settings, tunnel_manager, local_base_url))
 
@@ -171,6 +186,8 @@ def doctor_command(upstream: str | None, e2e_upstream: str | None, cloudflared_b
         port=None,
         upstream=upstream,
         e2e_upstream=e2e_upstream,
+        tls_cert_file=None,
+        tls_key_file=None,
         tunnel=None,
         cloudflared_bin=cloudflared_bin,
         log_level=None,

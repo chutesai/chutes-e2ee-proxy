@@ -58,6 +58,8 @@ Point your client `base_url` to that local URL (or the tunnel URL if enabled) an
 | `--port` | `CHUTES_PROXY_PORT` | `8787` |
 | `--upstream` | `CHUTES_UPSTREAM` | `https://llm.chutes.ai` |
 | `--e2e-upstream` | `CHUTES_E2E_UPSTREAM` | auto-derived (`https://api.chutes.ai` for `llm.chutes.ai`) |
+| `--tls-cert-file` | `CHUTES_TLS_CERT_FILE` | unset |
+| `--tls-key-file` | `CHUTES_TLS_KEY_FILE` | unset |
 | `--tunnel` | `CHUTES_PROXY_TUNNEL` | `auto` |
 | `--cloudflared-bin` | `CHUTES_CLOUDFLARED_BIN` | auto-detect |
 | `--log-level` | `CHUTES_LOG_LEVEL` | `info` |
@@ -66,6 +68,23 @@ Tunnel modes:
 - `auto`: try cloudflared, continue without tunnel if unavailable
 - `required`: fail startup (or request shutdown) if tunnel unavailable/exits
 - `off`: disable tunnel
+
+### Local-only HTTPS (no Cloudflare)
+
+Use local TLS cert/key files and keep tunnel disabled:
+
+```bash
+chutes-e2ee-proxy serve \
+  --tunnel off \
+  --tls-cert-file /path/to/localhost.pem \
+  --tls-key-file /path/to/localhost-key.pem
+```
+
+Then point your app at:
+
+```text
+https://127.0.0.1:8787/v1
+```
 
 ### `doctor`
 

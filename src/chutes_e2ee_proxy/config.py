@@ -18,6 +18,8 @@ class Settings:
     port: int = 8787
     upstream: str = "https://llm.chutes.ai"
     e2e_upstream: str = "https://api.chutes.ai"
+    tls_cert_file: str | None = None
+    tls_key_file: str | None = None
     tunnel: TunnelMode = TunnelMode.AUTO
     cloudflared_bin: str | None = None
     log_level: str = "info"
@@ -43,6 +45,8 @@ class Settings:
         port: int | None,
         upstream: str | None,
         e2e_upstream: str | None,
+        tls_cert_file: str | None,
+        tls_key_file: str | None,
         tunnel: str | None,
         cloudflared_bin: str | None,
         log_level: str | None,
@@ -55,6 +59,8 @@ class Settings:
             "CHUTES_E2E_UPSTREAM",
             cls._default_e2e_upstream_for(resolved_upstream),
         ).rstrip("/")
+        resolved_tls_cert_file = cls._coalesce(tls_cert_file, "CHUTES_TLS_CERT_FILE", "").strip()
+        resolved_tls_key_file = cls._coalesce(tls_key_file, "CHUTES_TLS_KEY_FILE", "").strip()
         resolved_tunnel = cls._coalesce(tunnel, "CHUTES_PROXY_TUNNEL", "auto").lower()
         resolved_cloudflared = cls._coalesce(
             cloudflared_bin,
@@ -77,11 +83,22 @@ class Settings:
         if resolved_log_level not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError(f"Invalid log level: {resolved_log_level}")
 
+        has_cert = bool(resolved_tls_cert_file)
+        has_key = bool(resolved_tls_key_file)
+        if has_cert != has_key:
+            raise ValueError("Both tls_cert_file and tls_key_file must be provided together")
+        if has_cert and not os.path.isfile(resolved_tls_cert_file):
+            raise ValueError(f"TLS cert file not found: {resolved_tls_cert_file}")
+        if has_key and not os.path.isfile(resolved_tls_key_file):
+            raise ValueError(f"TLS key file not found: {resolved_tls_key_file}")
+
         return cls(
             host=resolved_host,
             port=resolved_port,
             upstream=resolved_upstream,
             e2e_upstream=resolved_e2e_upstream,
+            tls_cert_file=resolved_tls_cert_file or None,
+            tls_key_file=resolved_tls_key_file or None,
             tunnel=TunnelMode(resolved_tunnel),
             cloudflared_bin=resolved_cloudflared or None,
             log_level=resolved_log_level,
