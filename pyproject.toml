@@ -14,7 +14,7 @@ dependencies = [
     "starlette>=0.37.0",
     "uvicorn[standard]>=0.29.0",
     "httpx>=0.25.0",
-    "chutes-e2ee>=0.1.0",
+    "chutes-e2ee @ git+https://github.com/chutesai/chutes-e2ee-transport.git@fix/model-selector-resolution",
     "click>=8.0",
 ]
 
