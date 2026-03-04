@@ -4,7 +4,6 @@ from typing import AsyncIterator
 
 import httpx
 import pytest
-from starlette.requests import Request
 
 from chutes_e2ee_proxy.app import create_app
 from chutes_e2ee_proxy.config import Settings, TunnelMode

@@ -131,13 +131,17 @@ def create_app(
         started = time.monotonic()
         state.in_flight += 1
 
-        mode = "transport"
         token = ""
         try:
             token = extract_bearer_token(request.headers)
         except AuthError as exc:
             state.in_flight -= 1
             return JSONResponse({"error": {"type": "unauthorized", "message": exc.message}}, status_code=401)
+        log_ctx = {
+            "method": request.method,
+            "path": request.url.path,
+            "key_prefix": key_prefix(token),
+        }
 
         try:
             body = await request.body()
@@ -159,13 +163,9 @@ def create_app(
                 "request proxied",
                 extra={
                     "fields": {
-                        "method": request.method,
-                        "path": request.url.path,
-                        "has_auth": True,
-                        "key_prefix": key_prefix(token),
+                        **log_ctx,
                         "status_code": upstream_response.status_code,
                         "latency_ms": latency_ms,
-                        "mode": mode,
                     }
                 },
             )
@@ -181,10 +181,7 @@ def create_app(
                 "upstream connect error",
                 extra={
                     "fields": {
-                        "method": request.method,
-                        "path": request.url.path,
-                        "has_auth": True,
-                        "key_prefix": key_prefix(token),
+                        **log_ctx,
                         "error_type": "connect_error",
                     }
                 },
@@ -195,10 +192,7 @@ def create_app(
                 "upstream timeout",
                 extra={
                     "fields": {
-                        "method": request.method,
-                        "path": request.url.path,
-                        "has_auth": True,
-                        "key_prefix": key_prefix(token),
+                        **log_ctx,
                         "error_type": "timeout",
                     }
                 },
@@ -210,12 +204,8 @@ def create_app(
                 "upstream status error passthrough",
                 extra={
                     "fields": {
-                        "method": request.method,
-                        "path": request.url.path,
-                        "has_auth": True,
-                        "key_prefix": key_prefix(token),
+                        **log_ctx,
                         "status_code": status_code,
-                        "mode": mode,
                     }
                 },
             )
@@ -229,12 +219,8 @@ def create_app(
                 "proxy request failed",
                 extra={
                     "fields": {
-                        "method": request.method,
-                        "path": request.url.path,
-                        "has_auth": True,
-                        "key_prefix": key_prefix(token),
+                        **log_ctx,
                         "error_type": "transport_error",
-                        "mode": mode,
                     }
                 },
             )
