@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+case "$(uname -s)" in
+  MINGW*|CYGWIN*|MSYS*|NT*)
+    echo "Windows detected. Launching PowerShell installer..."
+    curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | powershell -ExecutionPolicy Bypass -File - "$@"
+    ;;
+  *)
+    curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.sh | bash -s -- "$@"
+    ;;
+esac
