@@ -53,7 +53,7 @@ resolve_tunnel_mode() {
   done
 
   if [ -z "$mode" ]; then
-    mode="off"
+    mode="auto"
   fi
   printf '%s' "$mode"
 }
@@ -239,7 +239,7 @@ install_proxy() {
 
 ensure_cloudflared() {
   if command -v cloudflared >/dev/null 2>&1; then
-    return
+    return 0
   fi
 
   log "cloudflared not found, attempting installation..."
@@ -256,7 +256,9 @@ ensure_cloudflared() {
 
   if ! command -v cloudflared >/dev/null 2>&1; then
     log "cloudflared is still missing; proxy will run with --tunnel auto fallback behavior."
+    return 1
   fi
+  return 0
 }
 
 PY_BIN="$(require_python)"
@@ -264,8 +266,8 @@ ensure_uv || true
 install_proxy
 
 TUNNEL_MODE="$(resolve_tunnel_mode "$@")"
-if [ "$TUNNEL_MODE" = "off" ] && [ -z "${CHUTES_PROXY_TUNNEL:-}" ] && ! has_flag --tunnel "$@"; then
-  export CHUTES_PROXY_TUNNEL="off"
+if [ -z "${CHUTES_PROXY_TUNNEL:-}" ] && ! has_flag --tunnel "$@"; then
+  export CHUTES_PROXY_TUNNEL="$TUNNEL_MODE"
 fi
 
 HAS_TLS_CERT=false
@@ -277,14 +279,22 @@ if [ -n "${CHUTES_TLS_KEY_FILE:-}" ] || has_flag --tls-key-file "$@"; then
   HAS_TLS_KEY=true
 fi
 
-if [ "$TUNNEL_MODE" = "off" ]; then
-  if [ "$HAS_TLS_CERT" = false ] && [ "$HAS_TLS_KEY" = false ]; then
-    ensure_local_tls_cert
-    export CHUTES_TLS_CERT_FILE="$CERT_FILE"
-    export CHUTES_TLS_KEY_FILE="$KEY_FILE"
+if [ "$TUNNEL_MODE" != "off" ]; then
+  if ! ensure_cloudflared; then
+    if [ "$TUNNEL_MODE" = "required" ]; then
+      echo "cloudflared is required but unavailable." >&2
+      exit 1
+    fi
+    log "Falling back to local HTTPS because tunnel is unavailable."
+    export CHUTES_PROXY_TUNNEL="off"
+    TUNNEL_MODE="off"
   fi
-else
-  ensure_cloudflared
+fi
+
+if [ "$TUNNEL_MODE" = "off" ] && [ "$HAS_TLS_CERT" = false ] && [ "$HAS_TLS_KEY" = false ]; then
+  ensure_local_tls_cert
+  export CHUTES_TLS_CERT_FILE="$CERT_FILE"
+  export CHUTES_TLS_KEY_FILE="$KEY_FILE"
 fi
 
 log "Starting chutes-e2ee-proxy..."

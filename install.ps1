@@ -52,7 +52,7 @@ function Resolve-TunnelMode([string[]]$arguments) {
     }
 
     if ([string]::IsNullOrWhiteSpace($mode)) {
-        return "off"
+        return "auto"
     }
 
     return $mode.Trim().ToLowerInvariant()
@@ -225,7 +225,7 @@ function Install-Proxy($pyExec) {
 }
 
 function Ensure-Cloudflared {
-    if (Get-Command cloudflared -ErrorAction SilentlyContinue) { return }
+    if (Get-Command cloudflared -ErrorAction SilentlyContinue) { return $true }
 
     Write-Log "cloudflared not found, attempting installation..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
@@ -234,7 +234,9 @@ function Ensure-Cloudflared {
 
     if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
         Write-Log "cloudflared is still missing; proxy will run with --tunnel auto fallback behavior."
+        return $false
     }
+    return $true
 }
 
 $pyExec = Require-Python
@@ -242,21 +244,28 @@ Ensure-UV | Out-Null
 Install-Proxy $pyExec
 
 $tunnelMode = Resolve-TunnelMode $args
-if ($tunnelMode -eq "off" -and [string]::IsNullOrWhiteSpace($env:CHUTES_PROXY_TUNNEL) -and -not (Has-Flag "--tunnel" $args)) {
-    $env:CHUTES_PROXY_TUNNEL = "off"
+if ([string]::IsNullOrWhiteSpace($env:CHUTES_PROXY_TUNNEL) -and -not (Has-Flag "--tunnel" $args)) {
+    $env:CHUTES_PROXY_TUNNEL = $tunnelMode
 }
 
 $hasTlsCert = (-not [string]::IsNullOrWhiteSpace($env:CHUTES_TLS_CERT_FILE)) -or (Has-Flag "--tls-cert-file" $args)
 $hasTlsKey = (-not [string]::IsNullOrWhiteSpace($env:CHUTES_TLS_KEY_FILE)) -or (Has-Flag "--tls-key-file" $args)
 
-if ($tunnelMode -eq "off") {
-    if (-not $hasTlsCert -and -not $hasTlsKey) {
-        Ensure-LocalTlsCert
-        $env:CHUTES_TLS_CERT_FILE = $CertFile
-        $env:CHUTES_TLS_KEY_FILE = $KeyFile
+if ($tunnelMode -ne "off") {
+    if (-not (Ensure-Cloudflared)) {
+        if ($tunnelMode -eq "required") {
+            throw "cloudflared is required but unavailable."
+        }
+        Write-Log "Falling back to local HTTPS because tunnel is unavailable."
+        $env:CHUTES_PROXY_TUNNEL = "off"
+        $tunnelMode = "off"
     }
-} else {
-    Ensure-Cloudflared
+}
+
+if ($tunnelMode -eq "off" -and -not $hasTlsCert -and -not $hasTlsKey) {
+    Ensure-LocalTlsCert
+    $env:CHUTES_TLS_CERT_FILE = $CertFile
+    $env:CHUTES_TLS_KEY_FILE = $KeyFile
 }
 
 Write-Log "Starting chutes-e2ee-proxy..."
