@@ -37,6 +37,8 @@ irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps
 ```
 
 The bootstrap scripts attempt `uv` first, then fall back to `pipx`.
+By default they run local-only HTTPS (`--tunnel off`) and auto-generate/reuse local certs under `~/.chutes-e2ee-proxy/certs`.
+Pass `--tunnel auto` (or `--tunnel required`) to enable cloudflared.
 
 ## Run
 

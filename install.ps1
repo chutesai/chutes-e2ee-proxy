@@ -1,5 +1,11 @@
 $ErrorActionPreference = "Stop"
 
+$RepoFallback = "git+https://github.com/chutesai/chutes-e2ee-proxy.git"
+$StateDir = Join-Path $HOME ".chutes-e2ee-proxy"
+$CertDir = Join-Path $StateDir "certs"
+$CertFile = Join-Path $CertDir "localhost.pem"
+$KeyFile = Join-Path $CertDir "localhost-key.pem"
+
 function Write-Log($msg) {
     Write-Host "[install] $msg"
 }
@@ -9,6 +15,54 @@ function Add-LocalBinsToPath {
     if ($env:Path -notlike "*$localBin*") {
         $env:Path = "$localBin;$env:Path"
     }
+}
+
+function Has-Flag($flag, [string[]]$arguments) {
+    $prev = ""
+    foreach ($arg in $arguments) {
+        if ($prev -eq $flag) {
+            return $true
+        }
+        if ($arg -eq $flag -or $arg.StartsWith("$flag=")) {
+            return $true
+        }
+        $prev = $arg
+    }
+    return $false
+}
+
+function Resolve-TunnelMode([string[]]$arguments) {
+    $mode = $env:CHUTES_PROXY_TUNNEL
+    $prev = ""
+    foreach ($arg in $arguments) {
+        if ($prev -eq "--tunnel") {
+            $mode = $arg
+            $prev = ""
+            continue
+        }
+
+        if ($arg.StartsWith("--tunnel=")) {
+            $mode = $arg.Substring(9)
+            continue
+        }
+
+        if ($arg -eq "--tunnel") {
+            $prev = "--tunnel"
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($mode)) {
+        return "off"
+    }
+
+    return $mode.Trim().ToLowerInvariant()
+}
+
+function Test-NonEmptyFile([string]$path) {
+    if (-not (Test-Path -Path $path -PathType Leaf)) {
+        return $false
+    }
+    return (Get-Item -Path $path).Length -gt 0
 }
 
 function Require-Python {
@@ -33,7 +87,7 @@ function Ensure-UV {
 
     Write-Log "uv not found, attempting installation..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id astral-sh.uv --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
+        winget install --id astral-sh.uv --accept-package-agreements --accept-source-agreements *> $null
     }
 
     if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
@@ -70,18 +124,84 @@ function Ensure-Pipx($pyExec) {
     }
 }
 
+function Ensure-Mkcert {
+    Add-LocalBinsToPath
+    if (Get-Command mkcert -ErrorAction SilentlyContinue) { return $true }
+
+    Write-Log "mkcert not found, attempting installation for local TLS..."
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements *> $null
+    } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+        choco install mkcert -y *> $null
+    }
+
+    Add-LocalBinsToPath
+    if (Get-Command mkcert -ErrorAction SilentlyContinue) { return $true }
+    return $false
+}
+
+function Ensure-LocalTlsCert {
+    New-Item -ItemType Directory -Path $CertDir -Force | Out-Null
+
+    if ((Test-NonEmptyFile $CertFile) -and (Test-NonEmptyFile $KeyFile)) {
+        return
+    }
+
+    if (Ensure-Mkcert) {
+        try {
+            mkcert -install *> $null
+        } catch {
+            Write-Log "mkcert root CA install failed; continuing."
+        }
+
+        mkcert -cert-file $CertFile -key-file $KeyFile localhost 127.0.0.1 ::1 *> $null
+        if ((Test-NonEmptyFile $CertFile) -and (Test-NonEmptyFile $KeyFile)) {
+            Write-Log "Generated trusted local TLS cert with mkcert."
+            return
+        }
+    }
+
+    if (Get-Command openssl -ErrorAction SilentlyContinue) {
+        $opensslCfg = Join-Path $CertDir "openssl.cnf"
+@"
+[req]
+prompt = no
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+[req_distinguished_name]
+CN = localhost
+[v3_req]
+subjectAltName = @alt_names
+[alt_names]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+IP.2 = ::1
+"@ | Set-Content -Path $opensslCfg -Encoding ascii
+
+        & openssl req -x509 -nodes -newkey rsa:2048 -days 365 -keyout $KeyFile -out $CertFile -config $opensslCfg -extensions v3_req *> $null
+        Remove-Item -Path $opensslCfg -ErrorAction SilentlyContinue
+
+        if ((Test-NonEmptyFile $CertFile) -and (Test-NonEmptyFile $KeyFile)) {
+            Write-Log "Generated self-signed local TLS cert with openssl."
+            Write-Log "If your client rejects TLS, install mkcert and re-run install."
+            return
+        }
+    }
+
+    throw "Failed to generate local TLS cert/key."
+}
+
 function Install-Proxy($pyExec) {
-    $fallback = "git+https://github.com/chutesai/chutes-e2ee-proxy.git"
     if (Get-Command uv -ErrorAction SilentlyContinue) {
         Write-Log "Installing chutes-e2ee-proxy via uv..."
-        uv tool install --upgrade chutes-e2ee-proxy 2>$null
+        uv tool install --upgrade chutes-e2ee-proxy *> $null
         if ($LASTEXITCODE -eq 0) { return }
-        uv tool install --upgrade --force chutes-e2ee-proxy 2>$null
+        uv tool install --upgrade --force chutes-e2ee-proxy *> $null
         if ($LASTEXITCODE -eq 0) { return }
 
-        uv tool install --upgrade $fallback 2>$null
+        uv tool install --upgrade $RepoFallback *> $null
         if ($LASTEXITCODE -eq 0) { return }
-        uv tool install --upgrade --force $fallback 2>$null
+        uv tool install --upgrade --force $RepoFallback *> $null
         if ($LASTEXITCODE -eq 0) { return }
 
         Write-Log "uv installation failed; falling back to pipx..."
@@ -93,13 +213,13 @@ function Install-Proxy($pyExec) {
         Write-Log "Upgrading chutes-e2ee-proxy..."
         pipx upgrade chutes-e2ee-proxy 2>$null
         if ($LASTEXITCODE -ne 0) {
-            pipx install $fallback
+            pipx install $RepoFallback
         }
     } else {
         Write-Log "Installing chutes-e2ee-proxy via pipx..."
         pipx install chutes-e2ee-proxy 2>$null
         if ($LASTEXITCODE -ne 0) {
-            pipx install $fallback
+            pipx install $RepoFallback
         }
     }
 }
@@ -109,7 +229,7 @@ function Ensure-Cloudflared {
 
     Write-Log "cloudflared not found, attempting installation..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install Cloudflare.cloudflared --accept-package-agreements --accept-source-agreements 2>$null
+        winget install --id Cloudflare.cloudflared --accept-package-agreements --accept-source-agreements *> $null
     }
 
     if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
@@ -120,7 +240,24 @@ function Ensure-Cloudflared {
 $pyExec = Require-Python
 Ensure-UV | Out-Null
 Install-Proxy $pyExec
-Ensure-Cloudflared
+
+$tunnelMode = Resolve-TunnelMode $args
+if ($tunnelMode -eq "off" -and [string]::IsNullOrWhiteSpace($env:CHUTES_PROXY_TUNNEL) -and -not (Has-Flag "--tunnel" $args)) {
+    $env:CHUTES_PROXY_TUNNEL = "off"
+}
+
+$hasTlsCert = (-not [string]::IsNullOrWhiteSpace($env:CHUTES_TLS_CERT_FILE)) -or (Has-Flag "--tls-cert-file" $args)
+$hasTlsKey = (-not [string]::IsNullOrWhiteSpace($env:CHUTES_TLS_KEY_FILE)) -or (Has-Flag "--tls-key-file" $args)
+
+if ($tunnelMode -eq "off") {
+    if (-not $hasTlsCert -and -not $hasTlsKey) {
+        Ensure-LocalTlsCert
+        $env:CHUTES_TLS_CERT_FILE = $CertFile
+        $env:CHUTES_TLS_KEY_FILE = $KeyFile
+    }
+} else {
+    Ensure-Cloudflared
+}
 
 Write-Log "Starting chutes-e2ee-proxy..."
 chutes-e2ee-proxy serve @args
