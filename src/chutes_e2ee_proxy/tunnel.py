@@ -56,10 +56,10 @@ class TunnelManager:
 
     @staticmethod
     def resolve_cloudflared(explicit: str | None = None) -> str | None:
-        candidates: list[str] = []
         if explicit:
-            candidates.append(explicit)
+            return explicit if os.path.exists(explicit) else None
 
+        candidates: list[str] = []
         from_path = shutil.which("cloudflared")
         if from_path:
             candidates.append(from_path)

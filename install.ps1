@@ -4,6 +4,13 @@ function Write-Log($msg) {
     Write-Host "[install] $msg"
 }
 
+function Add-LocalBinsToPath {
+    $localBin = Join-Path $HOME ".local\bin"
+    if ($env:Path -notlike "*$localBin*") {
+        $env:Path = "$localBin;$env:Path"
+    }
+}
+
 function Require-Python {
     $python = Get-Command py -ErrorAction SilentlyContinue
     if ($python) {
@@ -20,7 +27,30 @@ function Require-Python {
     throw "Python 3.10+ is required."
 }
 
+function Ensure-UV {
+    Add-LocalBinsToPath
+    if (Get-Command uv -ErrorAction SilentlyContinue) { return $true }
+
+    Write-Log "uv not found, attempting installation..."
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id astral-sh.uv --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
+    }
+
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        try {
+            irm https://astral.sh/uv/install.ps1 | iex
+        } catch {
+            Write-Log "uv install script failed; will try pipx fallback."
+        }
+    }
+
+    Add-LocalBinsToPath
+    if (Get-Command uv -ErrorAction SilentlyContinue) { return $true }
+    return $false
+}
+
 function Ensure-Pipx($pyExec) {
+    Add-LocalBinsToPath
     if (Get-Command pipx -ErrorAction SilentlyContinue) { return }
 
     Write-Log "pipx not found, installing..."
@@ -33,14 +63,27 @@ function Ensure-Pipx($pyExec) {
     }
 
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+    Add-LocalBinsToPath
 
     if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) {
         throw "Failed to install pipx"
     }
 }
 
-function Install-Proxy {
+function Install-Proxy($pyExec) {
     $fallback = "git+https://github.com/chutesai/chutes-e2ee-proxy.git"
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        Write-Log "Installing chutes-e2ee-proxy via uv..."
+        uv tool install --upgrade chutes-e2ee-proxy 2>$null
+        if ($LASTEXITCODE -eq 0) { return }
+
+        uv tool install --upgrade $fallback 2>$null
+        if ($LASTEXITCODE -eq 0) { return }
+
+        Write-Log "uv installation failed; falling back to pipx..."
+    }
+
+    Ensure-Pipx $pyExec
     $pipxList = pipx list 2>$null
     if ($pipxList -match "package chutes-e2ee-proxy") {
         Write-Log "Upgrading chutes-e2ee-proxy..."
@@ -71,8 +114,8 @@ function Ensure-Cloudflared {
 }
 
 $pyExec = Require-Python
-Ensure-Pipx $pyExec
-Install-Proxy
+Ensure-UV | Out-Null
+Install-Proxy $pyExec
 Ensure-Cloudflared
 
 Write-Log "Starting chutes-e2ee-proxy..."

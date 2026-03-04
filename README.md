@@ -4,16 +4,22 @@ Native, container-free E2EE proxy for Chutes. It accepts OpenAI-compatible HTTP 
 
 ## Install
 
-### Primary (pipx)
+### Primary (uv)
 
 ```bash
-pipx install chutes-e2ee-proxy
+uv tool install --upgrade chutes-e2ee-proxy
 ```
 
 If the package is not on PyPI yet:
 
 ```bash
-pipx install git+https://github.com/chutesai/chutes-e2ee-proxy.git
+uv tool install --upgrade git+https://github.com/chutesai/chutes-e2ee-proxy.git
+```
+
+### Alternative (pipx)
+
+```bash
+pipx install chutes-e2ee-proxy || pipx install git+https://github.com/chutesai/chutes-e2ee-proxy.git
 ```
 
 ### One-line bootstrap
@@ -29,6 +35,8 @@ PowerShell:
 ```powershell
 irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
 ```
+
+The bootstrap scripts attempt `uv` first, then fall back to `pipx`.
 
 ## Run
 
