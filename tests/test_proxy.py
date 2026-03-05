@@ -220,6 +220,22 @@ async def test_upstream_500_passthrough(app, fake_pool: FakePool) -> None:
 
 
 @pytest.mark.asyncio
+async def test_upstream_403_passthrough_preserves_body(app, fake_pool: FakePool) -> None:
+    transport = await fake_pool.get("token-403")
+    transport.response = httpx.Response(
+        403,
+        headers={"content-type": "application/json"},
+        content=b'{"detail":"Invalid, expired, or already-used nonce"}',
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/chat/completions", headers={"Authorization": "Bearer token-403"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Invalid, expired, or already-used nonce"
+
+
+@pytest.mark.asyncio
 async def test_http_status_error_passthrough(app, fake_pool: FakePool) -> None:
     transport = await fake_pool.get("token-status")
     req = httpx.Request("GET", "https://llm.chutes.ai/v1/models")

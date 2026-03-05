@@ -78,6 +78,14 @@ def _build_upstream_url(settings: Settings, request: Request) -> str:
     return f"{base}{path}"
 
 
+def _error_preview(body: bytes, max_chars: int = 240) -> str:
+    text = body.decode("utf-8", errors="replace")
+    compact = " ".join(text.split())
+    if len(compact) <= max_chars:
+        return compact
+    return compact[:max_chars] + "..."
+
+
 async def _stream_response(response: httpx.Response) -> AsyncIterator[bytes]:
     try:
         async for chunk in response.aiter_bytes():
@@ -164,6 +172,25 @@ def create_app(
             upstream_response = await transport.handle_async_request(upstream_request)
 
             latency_ms = int((time.monotonic() - started) * 1000)
+            if upstream_response.status_code == 403:
+                body = await upstream_response.aread()
+                logger.warning(
+                    "upstream forbidden passthrough",
+                    extra={
+                        "fields": {
+                            **log_ctx,
+                            "status_code": 403,
+                            "latency_ms": latency_ms,
+                            "upstream_detail": _error_preview(body),
+                        }
+                    },
+                )
+                return Response(
+                    content=body,
+                    status_code=403,
+                    headers=_filter_response_headers(upstream_response.headers),
+                )
+
             logger.info(
                 "request proxied",
                 extra={
@@ -205,14 +232,15 @@ def create_app(
             return _json_proxy_error(504, "upstream timeout")
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
+            fields = {
+                **log_ctx,
+                "status_code": status_code,
+            }
+            if status_code == 403:
+                fields["upstream_detail"] = _error_preview(exc.response.content)
             logger.info(
                 "upstream status error passthrough",
-                extra={
-                    "fields": {
-                        **log_ctx,
-                        "status_code": status_code,
-                    }
-                },
+                extra={"fields": fields},
             )
             return Response(
                 content=exc.response.content,
