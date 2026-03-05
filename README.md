@@ -132,13 +132,13 @@ Runs local checks for Python version, `chutes-e2ee` importability, cloudflared a
 ## Behavior
 
 1. Requires `Authorization: Bearer <token>` for model invocations; health and `GET /v1/models` may be called without auth.
-2. The proxy does not enforce request schemas, but it does apply a small OpenAI-compat normalization pass to JSON payloads before E2EE transport resolution.
+2. The proxy forwards request bodies unchanged. It does not rewrite or normalize JSON payloads before E2EE transport resolution.
 3. Uses per-key pooled `AsyncChutesE2EETransport` instances.
 4. Streams upstream response bytes back to caller.
 5. Upstream 4xx/5xx pass through unchanged (status, body bytes, and safe headers).
-6. The proxy caches the live `/v1/models` catalog in memory and uses it to resolve normal model names onto the current E2EE model ids and chute ids.
-7. E2EE requests support concrete model ids, public model roots, chute ids, user aliases, and ordered comma-separated failover lists by pre-resolving them to one E2EE-capable chute/instance.
-8. Metric-ranked selectors such as `:latency` and `:throughput` remain unsupported in the E2EE path because they require server-side performance ranking before chute selection.
+6. The proxy caches the live `/v1/models` catalog in memory and uses exact model ids to resolve chute ids for E2EE discovery.
+7. Because request bodies are passed through unchanged, invocation requests must use exact model ids returned by `/v1/models`.
+8. Alias names, public roots, chute ids, ordered failover lists, and metric-ranked selectors such as `:latency` and `:throughput` are intentionally unsupported in the E2EE path under this pass-through contract.
 
 `--upstream` is the client-facing OpenAI-compatible base (for example `https://llm.chutes.ai`), while `--e2e-upstream` is where `/e2e/*` is reached (for example `https://api.chutes.ai`).
 

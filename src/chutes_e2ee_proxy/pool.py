@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -32,26 +31,6 @@ class _Entry:
     last_used: float
 
 
-def _split_routing_mode(model: str) -> tuple[str, str | None]:
-    raw_model = model.strip()
-    lowered = raw_model.lower()
-    for suffix in (":latency", ":throughput"):
-        if lowered.endswith(suffix):
-            return raw_model[: -len(suffix)], suffix[1:]
-    return raw_model, None
-
-
-def _dedupe_keep_order(items: list[str]) -> list[str]:
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for item in items:
-        if item in seen:
-            continue
-        seen.add(item)
-        deduped.append(item)
-    return deduped
-
-
 def _looks_like_uuid(value: str) -> bool:
     parts = value.split("-")
     if len(parts) != 5:
@@ -65,15 +44,9 @@ def _looks_like_uuid(value: str) -> bool:
 
 def _build_proxy_discovery_manager(base_manager_cls):
     class ProxyDiscoveryManager(base_manager_cls):
-        _ALIAS_MAP_TTL = 120.0
-
         def __init__(self, model_api_base: str, e2e_api_base: str, api_key: str):
             super().__init__(api_base=e2e_api_base, api_key=api_key)
-            self._model_api_base = model_api_base.rstrip("/")
             self._model_catalog = ModelCatalog(model_api_base, api_key, ttl=self._MODEL_MAP_TTL)
-            self._alias_map: dict[str, list[str]] = {}
-            self._alias_map_loaded_at = 0.0
-            self._alias_map_lock = threading.Lock()
 
         def _maybe_refresh_model_map(self, client: httpx.Client) -> None:
             if self._model_map_loaded_at == 0.0:
@@ -89,68 +62,19 @@ def _build_proxy_discovery_manager(base_manager_cls):
             self._model_map = self._model_catalog.exact_model_map
             self._model_map_loaded_at = self._model_catalog.loaded_at
 
-        def canonical_model_id(self, model: str, client: httpx.Client | None = None) -> str | None:
-            entry = self._model_catalog.resolve(model, client)
-            if entry is None:
-                return None
-            return entry.model_id
-
-        async def canonical_model_id_async(
-            self,
-            model: str,
-            client: httpx.AsyncClient | None = None,
-        ) -> str | None:
-            entry = await self._model_catalog.resolve_async(model, client)
-            if entry is None:
-                return None
-            return entry.model_id
-
-        def _maybe_refresh_alias_map(self, client: httpx.Client) -> None:
-            now = time.time()
-            if now - self._alias_map_loaded_at < self._ALIAS_MAP_TTL:
-                return
-            with self._alias_map_lock:
-                if now - self._alias_map_loaded_at < self._ALIAS_MAP_TTL:
-                    return
-                resp = client.get(
-                    f"{self._api_base}/model_aliases/",
-                    headers=self._auth_headers,
-                    timeout=15,
-                )
-                resp.raise_for_status()
-                self._alias_map = {
-                    (entry.get("alias") or "").lower(): list(entry.get("chute_ids") or [])
-                    for entry in resp.json()
-                    if entry.get("alias") and entry.get("chute_ids")
-                }
-                self._alias_map_loaded_at = time.time()
-
-        async def _maybe_refresh_alias_map_async(self, client: httpx.AsyncClient) -> None:
-            now = time.time()
-            if now - self._alias_map_loaded_at < self._ALIAS_MAP_TTL:
-                return
-            resp = await client.get(
-                f"{self._api_base}/model_aliases/",
-                headers=self._auth_headers,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            self._alias_map = {
-                (entry.get("alias") or "").lower(): list(entry.get("chute_ids") or [])
-                for entry in resp.json()
-                if entry.get("alias") and entry.get("chute_ids")
-            }
-            self._alias_map_loaded_at = time.time()
-
         def _model_not_found(self, model: str) -> ProxyRequestError:
-            return ProxyRequestError(404, "model_not_found", f"model not found: {model}")
+            return ProxyRequestError(
+                404,
+                "model_not_found",
+                f"model not found: {model}. Use an exact model id returned by /v1/models.",
+            )
 
-        def _unsupported_routing(self, model: str, routing_mode: str) -> ProxyRequestError:
+        def _unsupported_selector(self, model: str) -> ProxyRequestError:
             return ProxyRequestError(
                 400,
-                "unsupported_model_routing",
-                f"E2EE does not support multi-model {routing_mode} routing for {model!r}; "
-                "use a concrete model, chute id, alias that resolves to one target, or ordered failover list.",
+                "unsupported_model_selector",
+                f"E2EE proxy request bodies are passed through unchanged; use an exact model id from "
+                f"/v1/models instead of {model!r}.",
             )
 
         def _normalize_instances_error(self, chute_id: str, exc: httpx.HTTPStatusError) -> ProxyRequestError:
@@ -171,113 +95,48 @@ def _build_proxy_discovery_manager(base_manager_cls):
                 detail or f"Failed to resolve E2EE-capable instances for chute {chute_id}",
             )
 
-        def _expand_model_token_sync(self, token: str, client: httpx.Client) -> list[str]:
-            stripped = token.strip()
-            if not stripped:
-                return []
-            if _looks_like_uuid(stripped):
-                return [stripped]
-            entry = self._model_catalog.resolve(stripped, client)
-            if entry is not None:
-                self._model_map = self._model_catalog.exact_model_map
-                self._model_map_loaded_at = self._model_catalog.loaded_at
-                return [entry.chute_id]
-            self._maybe_refresh_alias_map(client)
-            return list(self._alias_map.get(stripped.lower(), []))
-
-        async def _expand_model_token_async(self, token: str, client: httpx.AsyncClient) -> list[str]:
-            stripped = token.strip()
-            if not stripped:
-                return []
-            if _looks_like_uuid(stripped):
-                return [stripped]
-            entry = await self._model_catalog.resolve_async(stripped, client)
-            if entry is not None:
-                self._model_map = self._model_catalog.exact_model_map
-                self._model_map_loaded_at = self._model_catalog.loaded_at
-                return [entry.chute_id]
-            await self._maybe_refresh_alias_map_async(client)
-            return list(self._alias_map.get(stripped.lower(), []))
-
-        def _select_available_chute_sync(self, chute_ids: list[str], client: httpx.Client) -> str:
-            last_error: ProxyRequestError | None = None
-            for chute_id in chute_ids:
-                try:
-                    discovery = self._fetch_instances(chute_id, client)
-                except httpx.HTTPStatusError as exc:
-                    last_error = self._normalize_instances_error(chute_id, exc)
-                    continue
-                if discovery.instances:
-                    return chute_id
-                last_error = ProxyRequestError(
-                    503,
-                    "model_unavailable",
-                    f"No E2EE-capable instances available for chute {chute_id}",
-                )
-            raise last_error or ProxyRequestError(
-                503,
-                "model_unavailable",
-                "No E2EE-capable instances available for the requested model.",
-            )
-
-        async def _select_available_chute_async(self, chute_ids: list[str], client: httpx.AsyncClient) -> str:
-            last_error: ProxyRequestError | None = None
-            for chute_id in chute_ids:
-                try:
-                    discovery = await self._fetch_instances_async(chute_id, client)
-                except httpx.HTTPStatusError as exc:
-                    last_error = self._normalize_instances_error(chute_id, exc)
-                    continue
-                if discovery.instances:
-                    return chute_id
-                last_error = ProxyRequestError(
-                    503,
-                    "model_unavailable",
-                    f"No E2EE-capable instances available for chute {chute_id}",
-                )
-            raise last_error or ProxyRequestError(
-                503,
-                "model_unavailable",
-                "No E2EE-capable instances available for the requested model.",
-            )
+        def _validate_requested_model(self, model: str) -> str:
+            requested = model.strip()
+            lowered = requested.lower()
+            if (
+                not requested
+                or _looks_like_uuid(requested)
+                or "," in requested
+                or lowered.endswith(":latency")
+                or lowered.endswith(":throughput")
+            ):
+                raise self._unsupported_selector(model)
+            return requested
 
         def resolve_chute_id(self, model: str, client: httpx.Client) -> str:
-            raw_model, routing_mode = _split_routing_mode(model)
-            candidates: list[str]
-            if "," in raw_model:
-                expanded: list[str] = []
-                for token in raw_model.split(","):
-                    expanded.extend(self._expand_model_token_sync(token, client))
-                candidates = _dedupe_keep_order(expanded)
-            else:
-                candidates = self._expand_model_token_sync(raw_model, client)
-
-            if not candidates:
-                raise self._model_not_found(model)
-            if routing_mode and len(candidates) > 1:
-                raise self._unsupported_routing(model, routing_mode)
-            if len(candidates) == 1:
-                return candidates[0]
-            return self._select_available_chute_sync(candidates, client)
+            requested = self._validate_requested_model(model)
+            chute_id = self._model_catalog.resolve(requested, client)
+            if chute_id is None:
+                raise self._model_not_found(requested)
+            self._model_map = self._model_catalog.exact_model_map
+            self._model_map_loaded_at = self._model_catalog.loaded_at
+            return chute_id
 
         async def resolve_chute_id_async(self, model: str, client: httpx.AsyncClient) -> str:
-            raw_model, routing_mode = _split_routing_mode(model)
-            candidates: list[str]
-            if "," in raw_model:
-                expanded: list[str] = []
-                for token in raw_model.split(","):
-                    expanded.extend(await self._expand_model_token_async(token, client))
-                candidates = _dedupe_keep_order(expanded)
-            else:
-                candidates = await self._expand_model_token_async(raw_model, client)
+            requested = self._validate_requested_model(model)
+            chute_id = await self._model_catalog.resolve_async(requested, client)
+            if chute_id is None:
+                raise self._model_not_found(requested)
+            self._model_map = self._model_catalog.exact_model_map
+            self._model_map_loaded_at = self._model_catalog.loaded_at
+            return chute_id
 
-            if not candidates:
-                raise self._model_not_found(model)
-            if routing_mode and len(candidates) > 1:
-                raise self._unsupported_routing(model, routing_mode)
-            if len(candidates) == 1:
-                return candidates[0]
-            return await self._select_available_chute_async(candidates, client)
+        def _fetch_instances(self, chute_id: str, client: httpx.Client):
+            try:
+                return super()._fetch_instances(chute_id, client)
+            except httpx.HTTPStatusError as exc:
+                raise self._normalize_instances_error(chute_id, exc) from exc
+
+        async def _fetch_instances_async(self, chute_id: str, client: httpx.AsyncClient):
+            try:
+                return await super()._fetch_instances_async(chute_id, client)
+            except httpx.HTTPStatusError as exc:
+                raise self._normalize_instances_error(chute_id, exc) from exc
 
     return ProxyDiscoveryManager
 

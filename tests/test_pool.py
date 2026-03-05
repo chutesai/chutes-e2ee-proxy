@@ -238,7 +238,6 @@ async def test_default_factory_uses_split_model_discovery_when_upstreams_differ(
     )
     try:
         assert transport._api_base == "https://api.chutes.ai"
-        assert getattr(transport._discovery, "_model_api_base", None) == "https://llm.chutes.ai"
     finally:
         await transport.aclose()
 
@@ -254,7 +253,6 @@ async def test_default_factory_uses_transport_default_when_upstreams_match() -> 
     )
     try:
         assert transport._api_base == "https://llm.chutes.ai"
-        assert getattr(transport._discovery, "_model_api_base", None) == "https://llm.chutes.ai"
     finally:
         await transport.aclose()
 
@@ -288,7 +286,7 @@ async def test_default_factory_split_manager_targets_model_and_e2e_urls(
 
 
 @pytest.mark.asyncio
-async def test_default_factory_resolves_aliases_to_first_available_e2e_chute(
+async def test_default_factory_resolves_exact_model_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_transport_modules(monkeypatch)
@@ -300,56 +298,43 @@ async def test_default_factory_resolves_aliases_to_first_available_e2e_chute(
     )
     discovery = transport._discovery
 
-    class AliasAsyncClient:
-        def __init__(self) -> None:
-            self.urls: list[str] = []
-
+    class ModelAsyncClient:
         async def get(self, url: str, headers: dict | None = None, timeout: int | None = None):
             _ = headers, timeout
-            self.urls.append(url)
             request = httpx.Request("GET", url)
             if url.endswith("/v1/models"):
-                return httpx.Response(200, request=request, json={"data": []})
-            if url.endswith("/model_aliases/"):
                 return httpx.Response(
                     200,
                     request=request,
-                    json=[{"alias": "fast", "chute_ids": ["chute-1", "chute-2"]}],
-                )
-            if url.endswith("/e2e/instances/chute-1"):
-                return httpx.Response(
-                    404,
-                    request=request,
-                    json={"detail": "No E2E-capable instances available"},
-                )
-            if url.endswith("/e2e/instances/chute-2"):
-                return httpx.Response(
-                    200,
-                    request=request,
-                    json={
-                        "instances": [
-                            {
-                                "instance_id": "inst-2",
-                                "e2e_pubkey": "pk-2",
-                                "nonces": ["nonce-2"],
-                            }
-                        ],
-                        "nonce_expires_in": 55,
-                    },
+                    json={"data": [{"id": "model-1", "chute_id": "chute-1"}]},
                 )
             raise AssertionError(url)
 
-    client = AliasAsyncClient()
-    chute_id = await discovery.resolve_chute_id_async("fast", client)
-
-    assert chute_id == "chute-2"
-    assert "https://api.example/model_aliases/" in client.urls
-    assert "https://api.example/e2e/instances/chute-1" in client.urls
-    assert "https://api.example/e2e/instances/chute-2" in client.urls
+    assert await discovery.resolve_chute_id_async("model-1", ModelAsyncClient()) == "chute-1"
 
 
 @pytest.mark.asyncio
-async def test_default_factory_resolves_public_model_name_to_current_tee_chute(
+async def test_default_factory_rejects_uuid_selector_in_passthrough_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_transport_modules(monkeypatch)
+
+    transport = TransportPool._default_factory(
+        "cpk_test",
+        "https://llm.example",
+        "https://api.example",
+    )
+    discovery = transport._discovery
+
+    with pytest.raises(ProxyRequestError, match="use an exact model id"):
+        await discovery.resolve_chute_id_async(
+            "08a7a60f-6956-5a9e-9983-5603c3ac5a38",
+            _FakeAsyncClient(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_default_factory_rejects_noncanonical_public_model_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_transport_modules(monkeypatch)
@@ -375,37 +360,18 @@ async def test_default_factory_resolves_public_model_name_to_current_tee_chute(
                                 "id": "zai-org/GLM-4.7-TEE",
                                 "root": "zai-org/GLM-4.7",
                                 "chute_id": "chute-tee",
-                                "confidential_compute": True,
                             }
                         ]
                     },
                 )
-            if url.endswith("/e2e/instances/chute-tee"):
-                return httpx.Response(
-                    200,
-                    request=request,
-                    json={
-                        "instances": [
-                            {
-                                "instance_id": "inst-tee",
-                                "e2e_pubkey": "pk-tee",
-                                "nonces": ["nonce-tee"],
-                            }
-                        ],
-                        "nonce_expires_in": 55,
-                    },
-                )
-            if url.endswith("/model_aliases/"):
-                return httpx.Response(200, request=request, json=[])
             raise AssertionError(url)
 
-    client = RootAsyncClient()
-    assert await discovery.canonical_model_id_async("zai-org/GLM-4.7", client) == "zai-org/GLM-4.7-TEE"
-    assert await discovery.resolve_chute_id_async("zai-org/GLM-4.7", client) == "chute-tee"
+    with pytest.raises(ProxyRequestError, match="model not found: zai-org/GLM-4.7"):
+        await discovery.resolve_chute_id_async("zai-org/GLM-4.7", RootAsyncClient())
 
 
 @pytest.mark.asyncio
-async def test_default_factory_resolves_ordered_failover_lists(
+async def test_default_factory_rejects_ordered_failover_lists_in_passthrough_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_transport_modules(monkeypatch)
@@ -417,79 +383,55 @@ async def test_default_factory_resolves_ordered_failover_lists(
     )
     discovery = transport._discovery
 
-    class FailoverAsyncClient:
+    with pytest.raises(ProxyRequestError, match="use an exact model id"):
+        await discovery.resolve_chute_id_async("model-a, model-b", _FakeAsyncClient())
+
+
+@pytest.mark.asyncio
+async def test_default_factory_rejects_metric_routing_in_passthrough_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_transport_modules(monkeypatch)
+
+    transport = TransportPool._default_factory(
+        "cpk_test",
+        "https://llm.example",
+        "https://api.example",
+    )
+    discovery = transport._discovery
+
+    with pytest.raises(ProxyRequestError, match="use an exact model id"):
+        await discovery.resolve_chute_id_async("model-1:latency", _FakeAsyncClient())
+
+
+@pytest.mark.asyncio
+async def test_default_factory_maps_instance_discovery_errors_to_contract_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_transport_modules(monkeypatch)
+
+    transport = TransportPool._default_factory(
+        "cpk_test",
+        "https://llm.example",
+        "https://api.example",
+    )
+    discovery = transport._discovery
+
+    class UnavailableAsyncClient:
         async def get(self, url: str, headers: dict | None = None, timeout: int | None = None):
             _ = headers, timeout
             request = httpx.Request("GET", url)
-            if url.endswith("/v1/models"):
-                return httpx.Response(
-                    200,
-                    request=request,
-                    json={
-                        "data": [
-                            {"id": "model-a", "chute_id": "chute-a"},
-                            {"id": "model-b", "chute_id": "chute-b"},
-                        ]
-                    },
-                )
-            if url.endswith("/model_aliases/"):
-                return httpx.Response(200, request=request, json=[])
-            if url.endswith("/e2e/instances/chute-a"):
+            if url.endswith("/e2e/instances/chute-1"):
                 return httpx.Response(
                     404,
                     request=request,
-                    json={"detail": "No active instances found for this chute"},
-                )
-            if url.endswith("/e2e/instances/chute-b"):
-                return httpx.Response(
-                    200,
-                    request=request,
-                    json={
-                        "instances": [
-                            {
-                                "instance_id": "inst-b",
-                                "e2e_pubkey": "pk-b",
-                                "nonces": ["nonce-b"],
-                            }
-                        ],
-                        "nonce_expires_in": 55,
-                    },
+                    json={"detail": "No E2E-capable instances available"},
                 )
             raise AssertionError(url)
 
-    chute_id = await discovery.resolve_chute_id_async("model-a, model-b", FailoverAsyncClient())
-    assert chute_id == "chute-b"
-
-
-@pytest.mark.asyncio
-async def test_default_factory_rejects_metric_routing_over_multiple_targets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _install_fake_transport_modules(monkeypatch)
-
-    transport = TransportPool._default_factory(
-        "cpk_test",
-        "https://llm.example",
-        "https://api.example",
-    )
-    discovery = transport._discovery
-
-    class RoutingAsyncClient:
-        async def get(self, url: str, headers: dict | None = None, timeout: int | None = None):
-            _ = headers, timeout
-            request = httpx.Request("GET", url)
-            if url.endswith("/v1/models"):
-                return httpx.Response(200, request=request, json={"data": []})
-            if url.endswith("/model_aliases/"):
-                return httpx.Response(
-                    200,
-                    request=request,
-                    json=[{"alias": "fast", "chute_ids": ["chute-1", "chute-2"]}],
-                )
-            raise AssertionError(url)
-
-    with pytest.raises(ProxyRequestError, match="does not support multi-model latency routing"):
-        await discovery.resolve_chute_id_async("fast:latency", RoutingAsyncClient())
+    client = UnavailableAsyncClient()
+    with pytest.raises(ProxyRequestError, match="No E2E-capable instances available"):
+        await discovery._fetch_instances_async("chute-1", client)
 
 
 def test_default_factory_split_manager_contract_check_for_missing_method(

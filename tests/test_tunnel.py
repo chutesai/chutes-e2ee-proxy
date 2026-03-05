@@ -11,10 +11,20 @@ class _FakeProcess:
     def __init__(self, return_code: int = 1) -> None:
         self._return_code = return_code
         self.returncode = None
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
 
     async def wait(self) -> int:
         self.returncode = self._return_code
         return self._return_code
+
+    def terminate(self) -> None:
+        self.returncode = self._return_code
+
+    def kill(self) -> None:
+        self.returncode = self._return_code
 
 
 def test_parse_tunnel_url() -> None:
@@ -145,6 +155,31 @@ async def test_required_mode_triggers_shutdown_callback_on_exit() -> None:
     assert called.is_set() is True
     assert manager.snapshot().status == "disconnected"
     assert manager.snapshot().public_url is None
+
+
+@pytest.mark.asyncio
+async def test_required_mode_start_fails_quickly_when_cloudflared_exits_early(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logger = logging.getLogger("test")
+    manager = TunnelManager(
+        mode=TunnelMode.REQUIRED,
+        host="127.0.0.1",
+        port=8787,
+        cloudflared_bin=None,
+        logger=logger,
+    )
+
+    monkeypatch.setattr(manager, "resolve_cloudflared", lambda explicit=None: "/usr/bin/cloudflared")
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        _ = args, kwargs
+        return _FakeProcess(return_code=2)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(RuntimeError, match="cloudflared exited with code 2"):
+        await asyncio.wait_for(manager.start(), timeout=0.5)
 
 
 @pytest.mark.asyncio

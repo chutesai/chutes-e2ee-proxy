@@ -155,15 +155,24 @@ class TunnelManager:
         try:
             await asyncio.wait_for(self._ready.wait(), timeout=20.0)
         except asyncio.TimeoutError:
-            self._status = "disconnected"
             self._last_error = "timed out waiting for cloudflared tunnel URL"
-            self._logger.warning(
-                "cloudflared started but tunnel URL was not observed within timeout",
-                extra={"fields": {"tunnel_mode": self._mode.value}},
-            )
-            if self._mode is TunnelMode.REQUIRED:
-                await self.stop()
-                raise RuntimeError(self._last_error)
+
+        if self._public_url:
+            return
+
+        self._status = "disconnected"
+        self._logger.warning(
+            "cloudflared tunnel unavailable",
+            extra={
+                "fields": {
+                    "tunnel_mode": self._mode.value,
+                    "last_error": self._last_error or "unknown error",
+                }
+            },
+        )
+        if self._mode is TunnelMode.REQUIRED:
+            await self.stop()
+            raise RuntimeError(self._last_error or "cloudflared tunnel unavailable")
 
     async def _read_stream(self, stream: asyncio.StreamReader, stream_name: str) -> None:
         try:
@@ -204,6 +213,7 @@ class TunnelManager:
         self._status = "disconnected"
         self._public_url = None
         self._last_error = f"cloudflared exited with code {return_code}"
+        self._ready.set()
 
         self._logger.warning(
             "cloudflared tunnel exited",

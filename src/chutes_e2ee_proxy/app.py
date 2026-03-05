@@ -15,7 +15,6 @@ from starlette.routing import Route
 
 from chutes_e2ee_proxy.auth import AuthError, extract_bearer_token, key_prefix
 from chutes_e2ee_proxy.config import Settings
-from chutes_e2ee_proxy.contract import normalize_json_request_body
 from chutes_e2ee_proxy.errors import ProxyRequestError
 from chutes_e2ee_proxy.pool import TransportPool
 from chutes_e2ee_proxy.tunnel import TunnelManager
@@ -122,16 +121,6 @@ async def _send_plain_upstream_request(
         )
 
 
-async def _canonicalize_model_for_transport(transport: object, model: str) -> str | None:
-    discovery = getattr(transport, "_discovery", None)
-    if discovery is None:
-        return None
-    canonicalize = getattr(discovery, "canonical_model_id_async", None)
-    if canonicalize is None:
-        return None
-    return await canonicalize(model)
-
-
 def create_app(
     settings: Settings,
     pool: TransportPool,
@@ -202,13 +191,6 @@ def create_app(
             body = await request.body()
             if token:
                 transport = await pool.get(token)
-                body = await normalize_json_request_body(
-                    request.headers,
-                    body,
-                    canonicalize_model=lambda model: _canonicalize_model_for_transport(
-                        transport, model
-                    ),
-                )
             headers = _filter_request_headers(request)
             if allow_unauthenticated and not token:
                 headers.pop("Authorization", None)

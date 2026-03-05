@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import AsyncIterator
 
 import httpx
@@ -24,20 +23,11 @@ class FakeStream(httpx.AsyncByteStream):
         return
 
 
-class FakeDiscovery:
-    def __init__(self) -> None:
-        self.model_map: dict[str, str] = {}
-
-    async def canonical_model_id_async(self, model: str) -> str | None:
-        return self.model_map.get(model)
-
-
 class FakeTransport:
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
         self.response: httpx.Response | None = None
         self.exc: Exception | None = None
-        self._discovery = FakeDiscovery()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -202,30 +192,27 @@ async def test_non_stream_body_passthrough(app, fake_pool: FakePool) -> None:
 
 
 @pytest.mark.asyncio
-async def test_json_request_is_normalized_before_transport(app, fake_pool: FakePool) -> None:
-    transport = await fake_pool.get("token-normalize")
+async def test_json_request_body_is_forwarded_unchanged(app, fake_pool: FakePool) -> None:
+    transport = await fake_pool.get("token-unchanged")
     transport.response = httpx.Response(200, json={"ok": True})
-    transport._discovery.model_map["zai-org/GLM-4.7"] = "zai-org/GLM-4.7-TEE"
-
-    body = {
-        "model": "zai-org/GLM-4.7:THINKING",
-        "messages": [{"role": "user", "content": "hi"}],
-        "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {}}}],
-    }
+    body = (
+        b'{"model":"zai-org/GLM-4.7:THINKING","messages":[{"role":"user","content":"hi"}],'
+        b'"continue_final_message":true,"tools":[{"type":"function","function":{"name":"lookup","parameters":{}}}]}'
+    )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/v1/chat/completions",
-            json=body,
-            headers={"Authorization": "Bearer token-normalize"},
+            content=body,
+            headers={
+                "Authorization": "Bearer token-unchanged",
+                "Content-Type": "application/json",
+            },
         )
 
     assert response.status_code == 200
     sent = transport.requests[0]
-    payload = json.loads(sent.content)
-    assert payload["model"] == "zai-org/GLM-4.7-TEE"
-    assert payload["tool_choice"] == "auto"
-    assert payload["chat_template_kwargs"] == {"thinking": True, "enable_thinking": True}
+    assert sent.content == body
 
 
 @pytest.mark.asyncio
