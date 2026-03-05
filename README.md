@@ -110,6 +110,7 @@ Runs local checks for Python version, `chutes-e2ee` importability, cloudflared a
 3. Uses per-key pooled `AsyncChutesE2EETransport` instances.
 4. Streams upstream response bytes back to caller.
 5. Upstream 4xx/5xx pass through unchanged.
+6. E2EE requests must use a single concrete model name. Chutes multi-model routing/failover selectors are not supported in the E2EE path because encryption/invoke requires a preselected chute/instance.
 
 `--upstream` is the client-facing OpenAI-compatible base (for example `https://llm.chutes.ai`), while `--e2e-upstream` is where `/e2e/*` is reached (for example `https://api.chutes.ai`).
 
