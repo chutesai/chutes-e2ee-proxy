@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 from typing import AsyncIterator
 
 import httpx
 import pytest
 
+import chutes_e2ee_proxy.app as app_module
 from chutes_e2ee_proxy.app import create_app
 from chutes_e2ee_proxy.config import Settings, TunnelMode
+from chutes_e2ee_proxy.errors import ProxyRequestError
 
 
 class FakeStream(httpx.AsyncByteStream):
@@ -21,11 +24,20 @@ class FakeStream(httpx.AsyncByteStream):
         return
 
 
+class FakeDiscovery:
+    def __init__(self) -> None:
+        self.model_map: dict[str, str] = {}
+
+    async def canonical_model_id_async(self, model: str) -> str | None:
+        return self.model_map.get(model)
+
+
 class FakeTransport:
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
         self.response: httpx.Response | None = None
         self.exc: Exception | None = None
+        self._discovery = FakeDiscovery()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -144,6 +156,30 @@ async def test_missing_auth_returns_401(app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_public_models_allows_no_auth(settings: Settings, fake_pool: FakePool, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_send_plain(request, upstream_url: str, headers: dict[str, str], body: bytes) -> httpx.Response:
+        captured["method"] = request.method
+        captured["upstream_url"] = upstream_url
+        captured["headers"] = headers
+        captured["body"] = body
+        return httpx.Response(200, json={"data": [{"id": "model-1"}]})
+
+    monkeypatch.setattr(app_module, "_send_plain_upstream_request", fake_send_plain)
+    app = create_app(settings, fake_pool, FakeTunnel(), lambda: None)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/v1/models")
+
+    assert response.status_code == 200
+    assert response.json()["data"][0]["id"] == "model-1"
+    assert captured["method"] == "GET"
+    assert captured["upstream_url"] == "https://llm.chutes.ai/v1/models"
+    assert fake_pool.by_key == {}
+
+
+@pytest.mark.asyncio
 async def test_non_stream_body_passthrough(app, fake_pool: FakePool) -> None:
     transport = await fake_pool.get("token-1")
     transport.response = httpx.Response(200, json={"ok": True})
@@ -163,6 +199,33 @@ async def test_non_stream_body_passthrough(app, fake_pool: FakePool) -> None:
     sent = transport.requests[0]
     assert sent.url == httpx.URL("https://llm.chutes.ai/v1/chat/completions?x=1")
     assert sent.content == body
+
+
+@pytest.mark.asyncio
+async def test_json_request_is_normalized_before_transport(app, fake_pool: FakePool) -> None:
+    transport = await fake_pool.get("token-normalize")
+    transport.response = httpx.Response(200, json={"ok": True})
+    transport._discovery.model_map["zai-org/GLM-4.7"] = "zai-org/GLM-4.7-TEE"
+
+    body = {
+        "model": "zai-org/GLM-4.7:THINKING",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {}}}],
+    }
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json=body,
+            headers={"Authorization": "Bearer token-normalize"},
+        )
+
+    assert response.status_code == 200
+    sent = transport.requests[0]
+    payload = json.loads(sent.content)
+    assert payload["model"] == "zai-org/GLM-4.7-TEE"
+    assert payload["tool_choice"] == "auto"
+    assert payload["chat_template_kwargs"] == {"thinking": True, "enable_thinking": True}
 
 
 @pytest.mark.asyncio
@@ -300,6 +363,24 @@ async def test_http_status_error_passthrough(app, fake_pool: FakePool) -> None:
 
 
 @pytest.mark.asyncio
+async def test_proxy_request_errors_return_explicit_status(app, fake_pool: FakePool) -> None:
+    transport = await fake_pool.get("token-contract")
+    transport.exc = ProxyRequestError(404, "model_not_found", "model not found: alias")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": "alias"},
+            headers={"Authorization": "Bearer token-contract"},
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {"type": "model_not_found", "message": "model not found: alias"}
+    }
+
+
+@pytest.mark.asyncio
 async def test_different_keys_use_separate_transports(app, fake_pool: FakePool) -> None:
     t1 = await fake_pool.get("token-a")
     t2 = await fake_pool.get("token-b")
@@ -344,4 +425,4 @@ async def test_lifespan_closes_pool_if_tunnel_start_fails(settings: Settings) ->
 
     assert pool.cleanup_started is True
     assert pool.closed is True
-    assert tunnel.stopped is False
+    assert tunnel.stopped is True

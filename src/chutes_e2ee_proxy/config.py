@@ -82,10 +82,8 @@ class Settings:
         if resolved_port <= 0 or resolved_port > 65535:
             raise ValueError(f"Invalid port: {resolved_port}")
 
-        if not resolved_upstream.startswith(("http://", "https://")):
-            raise ValueError("upstream must start with http:// or https://")
-        if not resolved_e2e_upstream.startswith(("http://", "https://")):
-            raise ValueError("e2e_upstream must start with http:// or https://")
+        cls._validate_base_url("upstream", resolved_upstream)
+        cls._validate_base_url("e2e_upstream", resolved_e2e_upstream)
 
         if resolved_log_level not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError(f"Invalid log level: {resolved_log_level}")
@@ -111,6 +109,18 @@ class Settings:
             cloudflared_origin_ca_pool=resolved_cloudflared_origin_ca_pool or None,
             log_level=resolved_log_level,
         )
+
+    @staticmethod
+    def _validate_base_url(name: str, value: str) -> None:
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError(f"{name} must start with http:// or https://")
+        if not parsed.hostname:
+            raise ValueError(f"{name} must include a hostname")
+        if parsed.path not in {"", "/"}:
+            raise ValueError(f"{name} must not include a path; use the host root only")
+        if parsed.params or parsed.query or parsed.fragment:
+            raise ValueError(f"{name} must not include params, query, or fragment")
 
     @staticmethod
     def _default_e2e_upstream_for(upstream: str) -> str:

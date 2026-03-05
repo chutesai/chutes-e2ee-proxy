@@ -109,7 +109,9 @@ def test_tls_requires_both_files(tls_cert_file, tls_key_file) -> None:
     [
         {"host": None, "port": -1, "upstream": None, "e2e_upstream": None, "tls_cert_file": None, "tls_key_file": None, "tunnel": None, "cloudflared_bin": None, "log_level": None},
         {"host": None, "port": None, "upstream": "not-a-url", "e2e_upstream": None, "tls_cert_file": None, "tls_key_file": None, "tunnel": None, "cloudflared_bin": None, "log_level": None},
+        {"host": None, "port": None, "upstream": "https://llm.chutes.ai/v1", "e2e_upstream": None, "tls_cert_file": None, "tls_key_file": None, "tunnel": None, "cloudflared_bin": None, "log_level": None},
         {"host": None, "port": None, "upstream": None, "e2e_upstream": "not-a-url", "tls_cert_file": None, "tls_key_file": None, "tunnel": None, "cloudflared_bin": None, "log_level": None},
+        {"host": None, "port": None, "upstream": None, "e2e_upstream": "https://api.chutes.ai/e2e", "tls_cert_file": None, "tls_key_file": None, "tunnel": None, "cloudflared_bin": None, "log_level": None},
         {"host": None, "port": None, "upstream": None, "e2e_upstream": None, "tls_cert_file": "/definitely/missing/cert.pem", "tls_key_file": "/definitely/missing/key.pem", "tunnel": None, "cloudflared_bin": None, "log_level": None},
         {"host": None, "port": None, "upstream": None, "e2e_upstream": None, "tls_cert_file": None, "tls_key_file": None, "tunnel": "bad", "cloudflared_bin": None, "log_level": None},
         {"host": None, "port": None, "upstream": None, "e2e_upstream": None, "tls_cert_file": None, "tls_key_file": None, "tunnel": None, "cloudflared_bin": None, "log_level": "bad"},

@@ -15,6 +15,8 @@ from starlette.routing import Route
 
 from chutes_e2ee_proxy.auth import AuthError, extract_bearer_token, key_prefix
 from chutes_e2ee_proxy.config import Settings
+from chutes_e2ee_proxy.contract import normalize_json_request_body
+from chutes_e2ee_proxy.errors import ProxyRequestError
 from chutes_e2ee_proxy.pool import TransportPool
 from chutes_e2ee_proxy.tunnel import TunnelManager
 
@@ -44,10 +46,11 @@ class AppState:
 
 
 def _json_proxy_error(status_code: int, message: str) -> JSONResponse:
-    return JSONResponse(
-        {"error": {"type": "proxy_error", "message": message}},
-        status_code=status_code,
-    )
+    return _json_error(status_code, "proxy_error", message)
+
+
+def _json_error(status_code: int, error_type: str, message: str) -> JSONResponse:
+    return JSONResponse({"error": {"type": error_type, "message": message}}, status_code=status_code)
 
 
 def _filter_request_headers(request: Request) -> dict[str, str]:
@@ -94,6 +97,41 @@ async def _stream_response(response: httpx.Response) -> AsyncIterator[bytes]:
         await response.aclose()
 
 
+def _is_public_models_request(request: Request) -> bool:
+    return request.method.upper() == "GET" and request.url.path == "/v1/models"
+
+
+async def _send_plain_upstream_request(
+    request: Request,
+    upstream_url: str,
+    headers: dict[str, str],
+    body: bytes,
+) -> httpx.Response:
+    async with httpx.AsyncClient() as client:
+        response = await client.request(
+            method=request.method,
+            url=upstream_url,
+            headers=headers,
+            content=body,
+        )
+        return httpx.Response(
+            status_code=response.status_code,
+            headers=response.headers,
+            content=response.content,
+            request=response.request,
+        )
+
+
+async def _canonicalize_model_for_transport(transport: object, model: str) -> str | None:
+    discovery = getattr(transport, "_discovery", None)
+    if discovery is None:
+        return None
+    canonicalize = getattr(discovery, "canonical_model_id_async", None)
+    if canonicalize is None:
+        return None
+    return await canonicalize(model)
+
+
 def create_app(
     settings: Settings,
     pool: TransportPool,
@@ -109,6 +147,8 @@ def create_app(
         try:
             await tunnel.start()
         except BaseException:
+            with suppress(Exception):
+                await tunnel.stop()
             with suppress(Exception):
                 await pool.close_all()
             raise
@@ -145,31 +185,51 @@ def create_app(
         state.in_flight += 1
 
         token = ""
+        allow_unauthenticated = _is_public_models_request(request)
         try:
             token = extract_bearer_token(request.headers)
         except AuthError as exc:
-            state.in_flight -= 1
-            return JSONResponse({"error": {"type": "unauthorized", "message": exc.message}}, status_code=401)
+            if not allow_unauthenticated:
+                state.in_flight -= 1
+                return _json_error(401, "unauthorized", exc.message)
         log_ctx = {
             "method": request.method,
             "path": request.url.path,
-            "key_prefix": key_prefix(token),
+            "key_prefix": key_prefix(token) if token else "anonymous",
         }
 
         try:
             body = await request.body()
+            if token:
+                transport = await pool.get(token)
+                body = await normalize_json_request_body(
+                    request.headers,
+                    body,
+                    canonicalize_model=lambda model: _canonicalize_model_for_transport(
+                        transport, model
+                    ),
+                )
             headers = _filter_request_headers(request)
+            if allow_unauthenticated and not token:
+                headers.pop("Authorization", None)
+                headers.pop("authorization", None)
             upstream_url = _build_upstream_url(settings, request)
 
-            transport = await pool.get(token)
-            upstream_request = httpx.Request(
-                method=request.method,
-                url=upstream_url,
-                headers=headers,
-                content=body,
-            )
-
-            upstream_response = await transport.handle_async_request(upstream_request)
+            if token:
+                upstream_request = httpx.Request(
+                    method=request.method,
+                    url=upstream_url,
+                    headers=headers,
+                    content=body,
+                )
+                upstream_response = await transport.handle_async_request(upstream_request)
+            else:
+                upstream_response = await _send_plain_upstream_request(
+                    request,
+                    upstream_url,
+                    headers,
+                    body,
+                )
 
             latency_ms = int((time.monotonic() - started) * 1000)
             if upstream_response.status_code >= 400:
@@ -248,6 +308,18 @@ def create_app(
                 status_code=status_code,
                 headers=_filter_response_headers(exc.response.headers),
             )
+        except ProxyRequestError as exc:
+            logger.warning(
+                "proxy contract error",
+                extra={
+                    "fields": {
+                        **log_ctx,
+                        "status_code": exc.status_code,
+                        "error_type": exc.error_type,
+                    }
+                },
+            )
+            return _json_error(exc.status_code, exc.error_type, exc.message)
         except Exception as exc:
             logger.exception(
                 "proxy request failed",

@@ -144,3 +144,25 @@ async def test_required_mode_triggers_shutdown_callback_on_exit() -> None:
 
     assert called.is_set() is True
     assert manager.snapshot().status == "disconnected"
+    assert manager.snapshot().public_url is None
+
+
+@pytest.mark.asyncio
+async def test_stop_clears_public_url() -> None:
+    logger = logging.getLogger("test")
+    manager = TunnelManager(
+        mode=TunnelMode.AUTO,
+        host="127.0.0.1",
+        port=8787,
+        cloudflared_bin=None,
+        logger=logger,
+    )
+
+    manager._status = "connected"
+    manager._public_url = "https://abc.trycloudflare.com"
+
+    await manager.stop()
+
+    snapshot = manager.snapshot()
+    assert snapshot.status == "disconnected"
+    assert snapshot.public_url is None

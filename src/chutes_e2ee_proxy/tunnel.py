@@ -110,7 +110,13 @@ class TunnelManager:
     async def start(self) -> None:
         if self._mode is TunnelMode.OFF:
             self._status = "off"
+            self._public_url = None
             return
+
+        self._stopping = False
+        self._ready = asyncio.Event()
+        self._public_url = None
+        self._last_error = None
 
         binary = self.resolve_cloudflared(self._cloudflared_bin)
         if not binary:
@@ -156,6 +162,7 @@ class TunnelManager:
                 extra={"fields": {"tunnel_mode": self._mode.value}},
             )
             if self._mode is TunnelMode.REQUIRED:
+                await self.stop()
                 raise RuntimeError(self._last_error)
 
     async def _read_stream(self, stream: asyncio.StreamReader, stream_name: str) -> None:
@@ -195,6 +202,7 @@ class TunnelManager:
             return
 
         self._status = "disconnected"
+        self._public_url = None
         self._last_error = f"cloudflared exited with code {return_code}"
 
         self._logger.warning(
@@ -230,8 +238,9 @@ class TunnelManager:
 
         if self._mode is TunnelMode.OFF:
             self._status = "off"
-        elif self._status != "connected":
+        else:
             self._status = "disconnected"
+        self._public_url = None
 
     def snapshot(self) -> TunnelSnapshot:
         return TunnelSnapshot(
