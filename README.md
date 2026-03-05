@@ -1,6 +1,6 @@
 # chutes-e2ee-proxy
 
-Native, container-free E2EE proxy for Chutes. It accepts OpenAI-compatible HTTP requests locally, forwards them through `chutes-e2ee-transport`, and returns upstream responses transparently.
+Native, container-free E2EE proxy for Chutes. It accepts OpenAI-compatible HTTP requests locally, forwards them through `chutes-e2ee-transport`, and returns upstream responses as-is.
 
 ## Quick Start (One-line bootstrap)
 
@@ -38,29 +38,6 @@ Bootstrap defaults:
 
 If cloudflared is unavailable, bootstrap automatically falls back to local HTTPS only.
 Pass `--tunnel off` to force local-only HTTPS.
-Set `CHUTES_PROXY_GIT_REF` to pin bootstrap installs to a specific tag or commit:
-
-```bash
-CHUTES_PROXY_GIT_REF=v0.1.0 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
-```
-
-PowerShell equivalent:
-
-```powershell
-$env:CHUTES_PROXY_GIT_REF="v0.1.0"; irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
-```
-
-Require uv-only installs (disable pipx fallback):
-
-```bash
-CHUTES_PROXY_UV_REQUIRED=1 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
-```
-
-PowerShell equivalent:
-
-```powershell
-$env:CHUTES_PROXY_UV_REQUIRED="1"; irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
-```
 
 ## Install
 
@@ -175,6 +152,32 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 pytest
+```
+
+## Bootstrap Advanced
+
+Set `CHUTES_PROXY_GIT_REF` to pin bootstrap installs to a specific tag or commit:
+
+```bash
+CHUTES_PROXY_GIT_REF=v0.1.0 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
+
+PowerShell equivalent:
+
+```powershell
+$env:CHUTES_PROXY_GIT_REF="v0.1.0"; irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
+```
+
+Require uv-only installs (disable pipx fallback):
+
+```bash
+CHUTES_PROXY_UV_REQUIRED=1 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
+
+PowerShell equivalent:
+
+```powershell
+$env:CHUTES_PROXY_UV_REQUIRED="1"; irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
 ```
 
 ## Canary CI (Live Key)
