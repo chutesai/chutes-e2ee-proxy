@@ -13,14 +13,26 @@ def _json_default(value: Any) -> str | Any:
     return str(value)
 
 
+def _normalize_logger_name(record: logging.LogRecord) -> str:
+    # Uvicorn emits normal lifecycle INFO logs on the "uvicorn.error" channel.
+    # Normalize those for readability while preserving the original channel separately.
+    if record.name == "uvicorn.error" and record.levelno < logging.ERROR:
+        return "uvicorn.lifecycle"
+    return record.name
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        normalized_logger = _normalize_logger_name(record)
         payload: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname.lower(),
-            "logger": record.name,
+            "logger": normalized_logger,
+            "component": normalized_logger.split(".", 1)[0],
             "message": record.getMessage(),
         }
+        if normalized_logger != record.name:
+            payload["source_logger"] = record.name
 
         fields = getattr(record, "fields", None)
         if isinstance(fields, dict):

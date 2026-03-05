@@ -36,6 +36,14 @@ PowerShell:
 irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
 ```
 
+On Windows with Git Bash available, the PowerShell bootstrap now delegates to `install.sh`
+so macOS/Linux/Git Bash and PowerShell share the same installer flow.
+You can also run the same bash one-liner directly in Git Bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
+
 The bootstrap scripts attempt `uv` first, then fall back to `pipx`, and prefer installing from GitHub `main` so bootstrap behavior matches the latest repository updates.
 
 Bootstrap defaults:
