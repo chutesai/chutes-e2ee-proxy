@@ -71,6 +71,7 @@ class TunnelManager:
             candidates.extend(
                 [
                     "C:\\Program Files\\cloudflared\\cloudflared.exe",
+                    "C:\\Program Files (x86)\\cloudflared\\cloudflared.exe",
                     "C:\\cloudflared\\cloudflared.exe",
                 ]
             )

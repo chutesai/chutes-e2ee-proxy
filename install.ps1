@@ -16,19 +16,34 @@ function Write-Log($msg) {
 }
 
 function Invoke-NativeQuiet([string]$command, [string[]]$arguments) {
-    try {
-        & $command @arguments *> $null
-        return ($LASTEXITCODE -eq 0)
-    } catch {
-        return $false
-    }
+    # Set SilentlyContinue locally so NativeCommandErrors from stderr output are
+    # discarded rather than promoted to terminating errors by the outer Stop preference.
+    # Stdout is left unredir'd: redirecting it (e.g. *>$null) gives uv a non-console
+    # handle and causes it to exit -1.  Stderr is suppressed with 2>$null so the
+    # terminal stays clean.  $ErrorActionPreference change is scoped to this function.
+    $ErrorActionPreference = "SilentlyContinue"
+    & $command @arguments 2>$null
+    return ($LASTEXITCODE -eq 0)
 }
 
 function Add-LocalBinsToPath {
     $localBin = Join-Path $HOME ".local\bin"
+    $cargoBin = Join-Path $HOME ".cargo\bin"
     if ($env:Path -notlike "*$localBin*") {
         $env:Path = "$localBin;$env:Path"
     }
+    if ($env:Path -notlike "*$cargoBin*") {
+        $env:Path = "$cargoBin;$env:Path"
+    }
+}
+
+function Refresh-PathFromRegistry {
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($machinePath -or $userPath) {
+        $env:Path = "$machinePath;$userPath"
+    }
+    Add-LocalBinsToPath
 }
 
 function Resolve-UVCommand {
@@ -123,6 +138,7 @@ function Ensure-UV {
         }
     }
 
+    Refresh-PathFromRegistry
     if (-not (Resolve-UVCommand)) {
         try {
             irm https://astral.sh/uv/install.ps1 | iex
@@ -131,7 +147,7 @@ function Ensure-UV {
         }
     }
 
-    Add-LocalBinsToPath
+    Refresh-PathFromRegistry
     if (Resolve-UVCommand) { return $true }
     return $false
 }
@@ -149,8 +165,7 @@ function Ensure-Pipx($pyExec) {
         & $pyExec -m pipx ensurepath
     }
 
-    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-    Add-LocalBinsToPath
+    Refresh-PathFromRegistry
 
     if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) {
         throw "Failed to install pipx"
@@ -163,12 +178,12 @@ function Ensure-Mkcert {
 
     Write-Log "mkcert not found, attempting installation for local TLS..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements *> $null
+        Invoke-NativeQuiet "winget" @("install", "--id", "FiloSottile.mkcert", "--accept-package-agreements", "--accept-source-agreements") | Out-Null
     } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
-        choco install mkcert -y *> $null
+        Invoke-NativeQuiet "choco" @("install", "mkcert", "-y") | Out-Null
     }
 
-    Add-LocalBinsToPath
+    Refresh-PathFromRegistry
     if (Get-Command mkcert -ErrorAction SilentlyContinue) { return $true }
     return $false
 }
@@ -187,7 +202,9 @@ function Ensure-LocalTlsCert {
             Write-Log "mkcert root CA install failed; continuing."
         }
 
-        mkcert -cert-file $CertFile -key-file $KeyFile localhost 127.0.0.1 ::1 *> $null
+        try {
+            mkcert -cert-file $CertFile -key-file $KeyFile localhost 127.0.0.1 ::1 *> $null
+        } catch {}
         if ((Test-NonEmptyFile $CertFile) -and (Test-NonEmptyFile $KeyFile)) {
             Write-Log "Generated trusted local TLS cert with mkcert."
             return
@@ -211,7 +228,9 @@ IP.1 = 127.0.0.1
 IP.2 = ::1
 "@ | Set-Content -Path $opensslCfg -Encoding ascii
 
-        & openssl req -x509 -nodes -newkey rsa:2048 -days 365 -keyout $KeyFile -out $CertFile -config $opensslCfg -extensions v3_req *> $null
+        try {
+            & openssl req -x509 -nodes -newkey rsa:2048 -days 365 -keyout $KeyFile -out $CertFile -config $opensslCfg -extensions v3_req *> $null
+        } catch {}
         Remove-Item -Path $opensslCfg -ErrorAction SilentlyContinue
 
         if ((Test-NonEmptyFile $CertFile) -and (Test-NonEmptyFile $KeyFile)) {
@@ -232,6 +251,15 @@ function Install-Proxy($pyExec) {
         if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", $RepoFallback)) { return }
         if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", $RepoFallback)) { return }
 
+        # Corrupt or stale tool environment — uninstall and purge any leftover dirs, then retry.
+        Invoke-NativeQuiet $uvCmd @("tool", "uninstall", "chutes-e2ee-proxy") | Out-Null
+        $uvToolDir = Join-Path $env:APPDATA "uv\tools\chutes-e2ee-proxy"
+        if (Test-Path $uvToolDir) { Remove-Item -Path $uvToolDir -Recurse -Force -ErrorAction SilentlyContinue }
+        $uvTrampoline = Join-Path $HOME ".local\bin\chutes-e2ee-proxy.exe"
+        if (Test-Path $uvTrampoline) { Remove-Item -Path $uvTrampoline -Force -ErrorAction SilentlyContinue }
+        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--force", $RepoFallback)) { return }
+        if (Invoke-NativeQuiet $uvCmd @("tool", "install", $RepoFallback)) { return }
+
         if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", "chutes-e2ee-proxy")) { return }
         if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "chutes-e2ee-proxy")) { return }
 
@@ -245,19 +273,17 @@ function Install-Proxy($pyExec) {
 
     Ensure-Pipx $pyExec
     Write-Log "Installing chutes-e2ee-proxy from GitHub ref '$proxyRef' via pipx..."
-    pipx install --force $RepoFallback 2>$null
-    if ($LASTEXITCODE -eq 0) { return }
+    if (Invoke-NativeQuiet "pipx" @("install", "--force", $RepoFallback)) { return }
 
-    $pipxList = pipx list 2>$null
+    $pipxList = $null
+    try { $pipxList = & pipx list *>&1 } catch {}
     if ($pipxList -match "package chutes-e2ee-proxy") {
-        pipx upgrade chutes-e2ee-proxy 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            pipx install $RepoFallback
+        if (-not (Invoke-NativeQuiet "pipx" @("upgrade", "chutes-e2ee-proxy"))) {
+            Invoke-NativeQuiet "pipx" @("install", $RepoFallback) | Out-Null
         }
     } else {
-        pipx install chutes-e2ee-proxy 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            pipx install $RepoFallback
+        if (-not (Invoke-NativeQuiet "pipx" @("install", "chutes-e2ee-proxy"))) {
+            Invoke-NativeQuiet "pipx" @("install", $RepoFallback) | Out-Null
         }
     }
 }
@@ -267,9 +293,10 @@ function Ensure-Cloudflared {
 
     Write-Log "cloudflared not found, attempting installation..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id Cloudflare.cloudflared --accept-package-agreements --accept-source-agreements *> $null
+        Invoke-NativeQuiet "winget" @("install", "--id", "Cloudflare.cloudflared", "--accept-package-agreements", "--accept-source-agreements") | Out-Null
     }
 
+    Refresh-PathFromRegistry
     if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
         Write-Log "cloudflared is still missing; proxy will run with --tunnel auto fallback behavior."
         return $false
@@ -283,6 +310,7 @@ if ($uvRequired -and -not $uvAvailable) {
     throw "uv installation is required but uv is unavailable. Ensure uv is installed and runnable."
 }
 Install-Proxy $pyExec
+Refresh-PathFromRegistry
 
 $tunnelMode = Resolve-TunnelMode $args
 if ([string]::IsNullOrWhiteSpace($env:CHUTES_PROXY_TUNNEL) -and -not (Has-Flag "--tunnel" $args)) {

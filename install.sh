@@ -234,6 +234,14 @@ install_proxy() {
       if uv tool install --upgrade "$REPO_FALLBACK" </dev/null; then
         return 0
       fi
+      # Corrupt or stale tool environment — uninstall and retry from scratch.
+      uv tool uninstall chutes-e2ee-proxy </dev/null 2>/dev/null || true
+      if uv tool install --force "$REPO_FALLBACK" </dev/null; then
+        return 0
+      fi
+      if uv tool install "$REPO_FALLBACK" </dev/null; then
+        return 0
+      fi
       if uv tool install --upgrade --force chutes-e2ee-proxy </dev/null; then
         return 0
       fi
