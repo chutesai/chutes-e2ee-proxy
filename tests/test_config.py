@@ -10,6 +10,7 @@ def test_env_resolution(monkeypatch) -> None:
     monkeypatch.setenv("CHUTES_E2E_UPSTREAM", "https://example-e2e.com")
     monkeypatch.setenv("CHUTES_PROXY_TUNNEL", "off")
     monkeypatch.setenv("CHUTES_CLOUDFLARED_BIN", "/tmp/cloudflared")
+    monkeypatch.setenv("CHUTES_CLOUDFLARED_ORIGIN_CA_POOL", "/tmp/rootCA.pem")
     monkeypatch.setenv("CHUTES_LOG_LEVEL", "debug")
 
     settings = Settings.from_cli(None, None, None, None, None, None, None, None, None)
@@ -20,6 +21,7 @@ def test_env_resolution(monkeypatch) -> None:
     assert settings.e2e_upstream == "https://example-e2e.com"
     assert settings.tunnel is TunnelMode.OFF
     assert settings.cloudflared_bin == "/tmp/cloudflared"
+    assert settings.cloudflared_origin_ca_pool == "/tmp/rootCA.pem"
     assert settings.log_level == "debug"
 
 

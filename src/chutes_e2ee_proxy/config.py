@@ -22,6 +22,7 @@ class Settings:
     tls_key_file: str | None = None
     tunnel: TunnelMode = TunnelMode.AUTO
     cloudflared_bin: str | None = None
+    cloudflared_origin_ca_pool: str | None = None
     log_level: str = "info"
 
     pool_max_size: int = 64
@@ -49,7 +50,8 @@ class Settings:
         tls_key_file: str | None,
         tunnel: str | None,
         cloudflared_bin: str | None,
-        log_level: str | None,
+        log_level: str | None = None,
+        cloudflared_origin_ca_pool: str | None = None,
     ) -> "Settings":
         resolved_host = cls._coalesce(host, "CHUTES_PROXY_HOST", "127.0.0.1")
         resolved_port = int(cls._coalesce(str(port) if port is not None else None, "CHUTES_PROXY_PORT", "8787"))
@@ -67,6 +69,11 @@ class Settings:
             "CHUTES_CLOUDFLARED_BIN",
             "",
         )
+        resolved_cloudflared_origin_ca_pool = cls._coalesce(
+            cloudflared_origin_ca_pool,
+            "CHUTES_CLOUDFLARED_ORIGIN_CA_POOL",
+            "",
+        ).strip()
         resolved_log_level = cls._coalesce(log_level, "CHUTES_LOG_LEVEL", "info").lower()
 
         if resolved_tunnel not in {m.value for m in TunnelMode}:
@@ -101,6 +108,7 @@ class Settings:
             tls_key_file=resolved_tls_key_file or None,
             tunnel=TunnelMode(resolved_tunnel),
             cloudflared_bin=resolved_cloudflared or None,
+            cloudflared_origin_ca_pool=resolved_cloudflared_origin_ca_pool or None,
             log_level=resolved_log_level,
         )
 

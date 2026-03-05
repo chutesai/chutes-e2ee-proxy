@@ -110,6 +110,28 @@ function Test-NonEmptyFile([string]$path) {
     return (Get-Item -Path $path).Length -gt 0
 }
 
+function Resolve-MkcertRootCa {
+    if (-not (Get-Command mkcert -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    $caroot = $null
+    try {
+        $caroot = (mkcert -CAROOT 2>$null | Select-Object -First 1).Trim()
+    } catch {
+        return $null
+    }
+    if ([string]::IsNullOrWhiteSpace($caroot)) {
+        return $null
+    }
+
+    $rootCa = Join-Path $caroot "rootCA.pem"
+    if (Test-NonEmptyFile $rootCa) {
+        return $rootCa
+    }
+    return $null
+}
+
 function Require-Python {
     $python = Get-Command py -ErrorAction SilentlyContinue
     if ($python) {
@@ -243,6 +265,21 @@ IP.2 = ::1
     throw "Failed to generate local TLS cert/key."
 }
 
+function Maybe-SetCloudflaredOriginCaPool([string[]]$arguments) {
+    if (-not [string]::IsNullOrWhiteSpace($env:CHUTES_CLOUDFLARED_ORIGIN_CA_POOL)) {
+        return
+    }
+    if (Has-Flag "--cloudflared-origin-ca-pool" $arguments) {
+        return
+    }
+
+    $rootCa = Resolve-MkcertRootCa
+    if (-not [string]::IsNullOrWhiteSpace($rootCa)) {
+        $env:CHUTES_CLOUDFLARED_ORIGIN_CA_POOL = $rootCa
+        Write-Log "Configured cloudflared origin CA pool from mkcert root CA."
+    }
+}
+
 function Remove-StaleUVToolArtifacts([string]$uvCmd) {
     Invoke-NativeQuiet $uvCmd @("tool", "uninstall", "chutes-e2ee-proxy") | Out-Null
 
@@ -355,6 +392,13 @@ if (-not $hasTlsCert -and -not $hasTlsKey) {
     Ensure-LocalTlsCert
     $env:CHUTES_TLS_CERT_FILE = $CertFile
     $env:CHUTES_TLS_KEY_FILE = $KeyFile
+}
+
+if (
+    -not [string]::IsNullOrWhiteSpace($env:CHUTES_TLS_CERT_FILE) -and
+    -not [string]::IsNullOrWhiteSpace($env:CHUTES_TLS_KEY_FILE)
+) {
+    Maybe-SetCloudflaredOriginCaPool $args
 }
 
 if ($tunnelMode -ne "off") {

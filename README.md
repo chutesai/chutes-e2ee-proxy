@@ -34,6 +34,7 @@ Bootstrap defaults:
 - auto-generate/reuse local HTTPS certs under `~/.chutes-e2ee-proxy/certs`
 - run with tunnel mode `auto`
 - expose both local HTTPS and (when available) a cloudflared HTTPS endpoint
+- when mkcert is available, configure cloudflared origin verification using `CHUTES_CLOUDFLARED_ORIGIN_CA_POOL`
 
 If cloudflared is unavailable, bootstrap automatically falls back to local HTTPS only.
 Pass `--tunnel off` to force local-only HTTPS.
@@ -108,12 +109,15 @@ Point your client `base_url` to that local URL (or the tunnel URL if enabled) an
 | `--tls-key-file` | `CHUTES_TLS_KEY_FILE` | unset |
 | `--tunnel` | `CHUTES_PROXY_TUNNEL` | `auto` |
 | `--cloudflared-bin` | `CHUTES_CLOUDFLARED_BIN` | auto-detect |
+| `--cloudflared-origin-ca-pool` | `CHUTES_CLOUDFLARED_ORIGIN_CA_POOL` | unset |
 | `--log-level` | `CHUTES_LOG_LEVEL` | `info` |
 
 Tunnel modes:
 - `auto`: try cloudflared, continue without tunnel if unavailable
 - `required`: fail startup (or request shutdown) if tunnel unavailable/exits
 - `off`: disable tunnel
+
+When local TLS is enabled, cloudflared uses strict origin verification if `CHUTES_CLOUDFLARED_ORIGIN_CA_POOL` points to a CA bundle. If unset/unreadable, it falls back to `--no-tls-verify` for compatibility.
 
 ### Local-only HTTPS (no Cloudflare)
 

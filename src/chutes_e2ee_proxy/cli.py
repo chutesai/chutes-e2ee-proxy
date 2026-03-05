@@ -64,6 +64,7 @@ def _runtime_build_info() -> dict[str, str]:
 @click.option("--tls-key-file", type=click.Path(exists=True, dir_okay=False), default=None)
 @click.option("--tunnel", type=click.Choice([m.value for m in TunnelMode]), default=None)
 @click.option("--cloudflared-bin", type=str, default=None)
+@click.option("--cloudflared-origin-ca-pool", type=click.Path(exists=True, dir_okay=False), default=None)
 @click.option("--log-level", type=click.Choice(["debug", "info", "warning", "error", "critical"]), default=None)
 def serve_command(
     host: str | None,
@@ -74,6 +75,7 @@ def serve_command(
     tls_key_file: str | None,
     tunnel: str | None,
     cloudflared_bin: str | None,
+    cloudflared_origin_ca_pool: str | None,
     log_level: str | None,
 ) -> None:
     """Run proxy server."""
@@ -86,6 +88,7 @@ def serve_command(
         tls_key_file=tls_key_file,
         tunnel=tunnel,
         cloudflared_bin=cloudflared_bin,
+        cloudflared_origin_ca_pool=cloudflared_origin_ca_pool,
         log_level=log_level,
     )
 
@@ -225,6 +228,7 @@ async def _serve(settings: Settings) -> None:
         host=settings.host,
         port=settings.port,
         cloudflared_bin=settings.cloudflared_bin,
+        cloudflared_origin_ca_pool=settings.cloudflared_origin_ca_pool,
         logger=logger,
         local_tls_enabled=bool(settings.tls_cert_file),
         on_required_exit=request_shutdown,
@@ -283,6 +287,7 @@ def doctor_command(upstream: str | None, e2e_upstream: str | None, cloudflared_b
         tls_key_file=None,
         tunnel=None,
         cloudflared_bin=cloudflared_bin,
+        cloudflared_origin_ca_pool=None,
         log_level=None,
     )
 

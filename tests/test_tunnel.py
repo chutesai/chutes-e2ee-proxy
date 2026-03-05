@@ -47,7 +47,9 @@ def test_build_cloudflared_command_http_origin() -> None:
     ]
 
 
-def test_build_cloudflared_command_https_origin_uses_no_tls_verify() -> None:
+def test_build_cloudflared_command_https_origin_uses_ca_pool_when_available(tmp_path) -> None:
+    ca_pool = tmp_path / "rootCA.pem"
+    ca_pool.write_text("ca")
     manager = TunnelManager(
         mode=TunnelMode.AUTO,
         host="127.0.0.1",
@@ -55,6 +57,28 @@ def test_build_cloudflared_command_https_origin_uses_no_tls_verify() -> None:
         cloudflared_bin=None,
         logger=logging.getLogger("test"),
         local_tls_enabled=True,
+        cloudflared_origin_ca_pool=str(ca_pool),
+    )
+    command = manager._build_cloudflared_command("/usr/bin/cloudflared")
+    assert command == [
+        "/usr/bin/cloudflared",
+        "tunnel",
+        "--url",
+        "https://127.0.0.1:8787",
+        "--origin-ca-pool",
+        str(ca_pool),
+    ]
+
+
+def test_build_cloudflared_command_https_origin_falls_back_to_no_tls_verify() -> None:
+    manager = TunnelManager(
+        mode=TunnelMode.AUTO,
+        host="127.0.0.1",
+        port=8787,
+        cloudflared_bin=None,
+        logger=logging.getLogger("test"),
+        local_tls_enabled=True,
+        cloudflared_origin_ca_pool="/missing/rootCA.pem",
     )
     command = manager._build_cloudflared_command("/usr/bin/cloudflared")
     assert command == [

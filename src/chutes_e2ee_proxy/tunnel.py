@@ -32,6 +32,7 @@ class TunnelManager:
         cloudflared_bin: str | None,
         logger: logging.Logger,
         local_tls_enabled: bool = False,
+        cloudflared_origin_ca_pool: str | None = None,
         on_required_exit: Callable[[], None | Awaitable[None]] | None = None,
     ):
         self._mode = mode
@@ -40,6 +41,7 @@ class TunnelManager:
         self._cloudflared_bin = cloudflared_bin
         self._logger = logger
         self._local_tls_enabled = local_tls_enabled
+        self._cloudflared_origin_ca_pool = cloudflared_origin_ca_pool
         self._on_required_exit = on_required_exit
 
         self._status = "off" if mode is TunnelMode.OFF else "disconnected"
@@ -96,8 +98,13 @@ class TunnelManager:
             f"{origin_scheme}://{self._host}:{self._port}",
         ]
         if self._local_tls_enabled:
-            # Local TLS certs may be self-signed or privately issued (mkcert).
-            command.append("--no-tls-verify")
+            ca_pool = (self._cloudflared_origin_ca_pool or "").strip()
+            if ca_pool and os.path.isfile(ca_pool):
+                command.extend(["--origin-ca-pool", ca_pool])
+            else:
+                # Local TLS certs may be self-signed or privately issued.
+                # Use strict verification when a trust bundle is provided; otherwise degrade gracefully.
+                command.append("--no-tls-verify")
         return command
 
     async def start(self) -> None:
@@ -116,6 +123,14 @@ class TunnelManager:
             if self._mode is TunnelMode.REQUIRED:
                 raise RuntimeError("tunnel mode is required but cloudflared was not found")
             return
+
+        if self._local_tls_enabled:
+            ca_pool = (self._cloudflared_origin_ca_pool or "").strip()
+            if not (ca_pool and os.path.isfile(ca_pool)):
+                self._logger.warning(
+                    "cloudflared origin TLS verification disabled; set CHUTES_CLOUDFLARED_ORIGIN_CA_POOL to a trusted CA bundle path",
+                    extra={"fields": {"tunnel_mode": self._mode.value}},
+                )
 
         self._status = "starting"
         self._process = await asyncio.create_subprocess_exec(

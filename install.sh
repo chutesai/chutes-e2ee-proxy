@@ -45,6 +45,23 @@ has_flag() {
   return 1
 }
 
+resolve_mkcert_root_ca() {
+  if ! command -v mkcert >/dev/null 2>&1; then
+    return 1
+  fi
+  local caroot
+  caroot="$(mkcert -CAROOT 2>/dev/null || true)"
+  if [ -z "$caroot" ]; then
+    return 1
+  fi
+  local root_ca="${caroot}/rootCA.pem"
+  if [ -s "$root_ca" ]; then
+    printf '%s' "$root_ca"
+    return 0
+  fi
+  return 1
+}
+
 resolve_tunnel_mode() {
   local mode="${CHUTES_PROXY_TUNNEL:-}"
   local prev=""
@@ -210,6 +227,18 @@ EOF
   return 1
 }
 
+maybe_set_cloudflared_origin_ca_pool() {
+  if [ -n "${CHUTES_CLOUDFLARED_ORIGIN_CA_POOL:-}" ] || has_flag --cloudflared-origin-ca-pool "$@"; then
+    return 0
+  fi
+
+  local root_ca
+  if root_ca="$(resolve_mkcert_root_ca)"; then
+    export CHUTES_CLOUDFLARED_ORIGIN_CA_POOL="$root_ca"
+    log "Configured cloudflared origin CA pool from mkcert root CA."
+  fi
+}
+
 install_proxy() {
   local uv_required=false
   if is_true "${CHUTES_PROXY_UV_REQUIRED:-}"; then
@@ -320,6 +349,10 @@ if [ "$HAS_TLS_CERT" = false ] && [ "$HAS_TLS_KEY" = false ]; then
   ensure_local_tls_cert
   export CHUTES_TLS_CERT_FILE="$CERT_FILE"
   export CHUTES_TLS_KEY_FILE="$KEY_FILE"
+fi
+
+if [ -n "${CHUTES_TLS_CERT_FILE:-}" ] && [ -n "${CHUTES_TLS_KEY_FILE:-}" ]; then
+  maybe_set_cloudflared_origin_ca_pool "$@"
 fi
 
 if [ "$TUNNEL_MODE" != "off" ]; then
