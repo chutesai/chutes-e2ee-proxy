@@ -16,6 +16,17 @@ add_local_bins_to_path() {
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 }
 
+is_true() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 has_flag() {
   local flag="$1"
   shift
@@ -200,6 +211,11 @@ EOF
 }
 
 install_proxy() {
+  local uv_required=false
+  if is_true "${CHUTES_PROXY_UV_REQUIRED:-}"; then
+    uv_required=true
+  fi
+
   add_local_bins_to_path
   if command -v uv >/dev/null 2>&1; then
     log "Installing chutes-e2ee-proxy from GitHub ref '${PROXY_REF}' via uv..."
@@ -224,8 +240,15 @@ install_proxy() {
       if uv tool install --upgrade chutes-e2ee-proxy </dev/null; then
         return 0
       fi
+      if [ "$uv_required" = true ]; then
+        echo "uv installation is required but failed. Set CHUTES_PROXY_UV_REQUIRED=0 to allow pipx fallback." >&2
+        exit 1
+      fi
       log "uv installation failed; falling back to pipx..."
     fi
+  elif [ "$uv_required" = true ]; then
+    echo "uv installation is required but uv is unavailable. Ensure uv is installed and runnable." >&2
+    exit 1
   fi
 
   ensure_pipx

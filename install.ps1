@@ -4,6 +4,7 @@ if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction Sile
 }
 
 $proxyRef = if ([string]::IsNullOrWhiteSpace($env:CHUTES_PROXY_GIT_REF)) { "main" } else { $env:CHUTES_PROXY_GIT_REF.Trim() }
+$uvRequired = @("1", "true", "yes", "on") -contains ($env:CHUTES_PROXY_UV_REQUIRED + "").Trim().ToLowerInvariant()
 $RepoFallback = "git+https://github.com/chutesai/chutes-e2ee-proxy.git@$proxyRef"
 $StateDir = Join-Path $HOME ".chutes-e2ee-proxy"
 $CertDir = Join-Path $StateDir "certs"
@@ -36,6 +37,14 @@ function Resolve-UVCommand {
     $uv = Get-Command uv -ErrorAction SilentlyContinue
     if ($uv) { return $uv.Source }
     return $null
+}
+
+function Ensure-UVExecutionPolicy {
+    try {
+        Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force *> $null
+    } catch {
+        return
+    }
 }
 
 function Has-Flag($flag, [string[]]$arguments) {
@@ -104,6 +113,7 @@ function Require-Python {
 
 function Ensure-UV {
     Add-LocalBinsToPath
+    Ensure-UVExecutionPolicy
     if (Resolve-UVCommand) { return $true }
 
     Write-Log "uv not found, attempting installation..."
@@ -217,6 +227,7 @@ IP.2 = ::1
 function Install-Proxy($pyExec) {
     $uvCmd = Resolve-UVCommand
     if ($uvCmd) {
+        Ensure-UVExecutionPolicy
         Write-Log "Installing chutes-e2ee-proxy from GitHub ref '$proxyRef' via uv..."
         if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", $RepoFallback)) { return }
         if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", $RepoFallback)) { return }
@@ -224,7 +235,12 @@ function Install-Proxy($pyExec) {
         if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", "chutes-e2ee-proxy")) { return }
         if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "chutes-e2ee-proxy")) { return }
 
+        if ($uvRequired) {
+            throw "uv installation is required but failed. Set CHUTES_PROXY_UV_REQUIRED=0 to allow pipx fallback."
+        }
         Write-Log "uv installation failed; falling back to pipx..."
+    } elseif ($uvRequired) {
+        throw "uv installation is required but uv is unavailable. Ensure uv is installed and runnable."
     }
 
     Ensure-Pipx $pyExec
@@ -262,7 +278,10 @@ function Ensure-Cloudflared {
 }
 
 $pyExec = Require-Python
-Ensure-UV | Out-Null
+$uvAvailable = Ensure-UV
+if ($uvRequired -and -not $uvAvailable) {
+    throw "uv installation is required but uv is unavailable. Ensure uv is installed and runnable."
+}
 Install-Proxy $pyExec
 
 $tunnelMode = Resolve-TunnelMode $args

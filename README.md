@@ -47,6 +47,12 @@ Set `CHUTES_PROXY_GIT_REF` to pin bootstrap installs to a specific tag or commit
 CHUTES_PROXY_GIT_REF=v0.1.0 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
 ```
 
+Require uv-only installs (disable pipx fallback):
+
+```bash
+CHUTES_PROXY_UV_REQUIRED=1 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
+
 ## Run
 
 ```bash
