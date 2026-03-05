@@ -97,3 +97,35 @@ async def test_pool_close_all_closes_every_transport() -> None:
     await pool.close_all()
 
     assert all(t.closed for t in created)
+
+
+@pytest.mark.asyncio
+async def test_default_factory_uses_split_model_discovery_when_upstreams_differ() -> None:
+    pytest.importorskip("chutes_e2ee")
+
+    transport = TransportPool._default_factory(
+        "cpk_test",
+        "https://llm.chutes.ai",
+        "https://api.chutes.ai",
+    )
+    try:
+        assert transport._api_base == "https://api.chutes.ai"
+        assert getattr(transport._discovery, "_model_api_base", None) == "https://llm.chutes.ai"
+    finally:
+        await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_default_factory_uses_transport_default_when_upstreams_match() -> None:
+    pytest.importorskip("chutes_e2ee")
+
+    transport = TransportPool._default_factory(
+        "cpk_test",
+        "https://llm.chutes.ai",
+        "https://llm.chutes.ai",
+    )
+    try:
+        assert transport._api_base == "https://llm.chutes.ai"
+        assert not hasattr(transport._discovery, "_model_api_base")
+    finally:
+        await transport.aclose()

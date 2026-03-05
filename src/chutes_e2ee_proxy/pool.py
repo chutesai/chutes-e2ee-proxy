@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import httpx
+
 
 @dataclass
 class _Entry:
@@ -38,8 +40,66 @@ class TransportPool:
     @staticmethod
     def _default_factory(api_key: str, upstream: str, e2e_upstream: str) -> Any:
         from chutes_e2ee import AsyncChutesE2EETransport
+        from chutes_e2ee.discovery import DiscoveryManager
 
-        return AsyncChutesE2EETransport(api_key=api_key, api_base=e2e_upstream)
+        if upstream == e2e_upstream:
+            return AsyncChutesE2EETransport(api_key=api_key, api_base=e2e_upstream)
+
+        class _SplitModelDiscoveryManager(DiscoveryManager):
+            def __init__(self, model_api_base: str, e2e_api_base: str, key: str):
+                super().__init__(api_base=e2e_api_base, api_key=key)
+                self._model_api_base = model_api_base.rstrip("/")
+
+            def _maybe_refresh_model_map(self, client: httpx.Client) -> None:
+                now = time.time()
+                if now - self._model_map_loaded_at < self._MODEL_MAP_TTL:
+                    return
+                with self._model_map_lock:
+                    if now - self._model_map_loaded_at < self._MODEL_MAP_TTL:
+                        return
+                    resp = client.get(
+                        f"{self._model_api_base}/v1/models",
+                        headers=self._auth_headers,
+                        timeout=15,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json().get("data", [])
+                    new_map: dict[str, str] = {}
+                    for entry in data:
+                        model_id = entry.get("id")
+                        chute_id = entry.get("chute_id")
+                        if model_id and chute_id:
+                            new_map[model_id] = chute_id
+                    self._model_map = new_map
+                    self._model_map_loaded_at = time.time()
+
+            async def _maybe_refresh_model_map_async(self, client: httpx.AsyncClient) -> None:
+                now = time.time()
+                if now - self._model_map_loaded_at < self._MODEL_MAP_TTL:
+                    return
+                resp = await client.get(
+                    f"{self._model_api_base}/v1/models",
+                    headers=self._auth_headers,
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                data = resp.json().get("data", [])
+                new_map: dict[str, str] = {}
+                for entry in data:
+                    model_id = entry.get("id")
+                    chute_id = entry.get("chute_id")
+                    if model_id and chute_id:
+                        new_map[model_id] = chute_id
+                self._model_map = new_map
+                self._model_map_loaded_at = time.time()
+
+        transport = AsyncChutesE2EETransport(api_key=api_key, api_base=e2e_upstream)
+        transport._discovery = _SplitModelDiscoveryManager(
+            model_api_base=upstream,
+            e2e_api_base=e2e_upstream,
+            key=api_key,
+        )
+        return transport
 
     def start_cleanup_task(self) -> None:
         if self._cleanup_task is None:
