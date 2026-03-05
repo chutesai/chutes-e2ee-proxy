@@ -31,6 +31,7 @@ class TunnelManager:
         port: int,
         cloudflared_bin: str | None,
         logger: logging.Logger,
+        local_tls_enabled: bool = False,
         on_required_exit: Callable[[], None | Awaitable[None]] | None = None,
     ):
         self._mode = mode
@@ -38,6 +39,7 @@ class TunnelManager:
         self._port = port
         self._cloudflared_bin = cloudflared_bin
         self._logger = logger
+        self._local_tls_enabled = local_tls_enabled
         self._on_required_exit = on_required_exit
 
         self._status = "off" if mode is TunnelMode.OFF else "disconnected"
@@ -84,6 +86,19 @@ class TunnelManager:
                 return candidate
         return None
 
+    def _build_cloudflared_command(self, binary: str) -> list[str]:
+        origin_scheme = "https" if self._local_tls_enabled else "http"
+        command = [
+            binary,
+            "tunnel",
+            "--url",
+            f"{origin_scheme}://{self._host}:{self._port}",
+        ]
+        if self._local_tls_enabled:
+            # Local TLS certs may be self-signed or privately issued (mkcert).
+            command.append("--no-tls-verify")
+        return command
+
     async def start(self) -> None:
         if self._mode is TunnelMode.OFF:
             self._status = "off"
@@ -103,10 +118,7 @@ class TunnelManager:
 
         self._status = "starting"
         self._process = await asyncio.create_subprocess_exec(
-            binary,
-            "tunnel",
-            "--url",
-            f"http://{self._host}:{self._port}",
+            *self._build_cloudflared_command(binary),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

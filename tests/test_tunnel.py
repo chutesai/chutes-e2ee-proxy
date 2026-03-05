@@ -29,6 +29,43 @@ def test_resolve_cloudflared_prefers_explicit(tmp_path) -> None:
     assert TunnelManager.resolve_cloudflared(str(fake)) == str(fake)
 
 
+def test_build_cloudflared_command_http_origin() -> None:
+    manager = TunnelManager(
+        mode=TunnelMode.AUTO,
+        host="127.0.0.1",
+        port=8787,
+        cloudflared_bin=None,
+        logger=logging.getLogger("test"),
+        local_tls_enabled=False,
+    )
+    command = manager._build_cloudflared_command("/usr/bin/cloudflared")
+    assert command == [
+        "/usr/bin/cloudflared",
+        "tunnel",
+        "--url",
+        "http://127.0.0.1:8787",
+    ]
+
+
+def test_build_cloudflared_command_https_origin_uses_no_tls_verify() -> None:
+    manager = TunnelManager(
+        mode=TunnelMode.AUTO,
+        host="127.0.0.1",
+        port=8787,
+        cloudflared_bin=None,
+        logger=logging.getLogger("test"),
+        local_tls_enabled=True,
+    )
+    command = manager._build_cloudflared_command("/usr/bin/cloudflared")
+    assert command == [
+        "/usr/bin/cloudflared",
+        "tunnel",
+        "--url",
+        "https://127.0.0.1:8787",
+        "--no-tls-verify",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_required_mode_without_binary_raises() -> None:
     logger = logging.getLogger("test")

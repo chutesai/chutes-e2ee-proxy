@@ -172,6 +172,7 @@ async def _serve(settings: Settings) -> None:
         port=settings.port,
         cloudflared_bin=settings.cloudflared_bin,
         logger=logger,
+        local_tls_enabled=bool(settings.tls_cert_file),
         on_required_exit=request_shutdown,
     )
 
