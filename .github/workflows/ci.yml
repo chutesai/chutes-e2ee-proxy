@@ -36,8 +36,11 @@ jobs:
       - name: Ruff
         run: ruff check src tests
 
+      - name: Installer logic check (mocked)
+        run: pytest -q tests/test_install_sh.py
+
       - name: Pytest
-        run: pytest -q
+        run: pytest -q --ignore=tests/test_install_sh.py
 
   smoke-cross-platform:
     name: Smoke (${{ matrix.os }})

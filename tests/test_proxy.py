@@ -76,6 +76,31 @@ class FakeTunnel:
         return Snapshot()
 
 
+class FailingStartTunnel(FakeTunnel):
+    def __init__(self):
+        super().__init__(status="disconnected", mode="required")
+        self.stopped = False
+
+    async def start(self) -> None:
+        raise RuntimeError("tunnel start failed")
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+class TrackingPool(FakePool):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cleanup_started = False
+        self.closed = False
+
+    def start_cleanup_task(self) -> None:
+        self.cleanup_started = True
+
+    async def close_all(self) -> None:
+        self.closed = True
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
@@ -239,3 +264,18 @@ async def test_health_reports_connected_tunnel_state(settings: Settings, fake_po
     assert payload["tunnel"]["mode"] == "auto"
     assert payload["tunnel"]["status"] == "connected"
     assert payload["tunnel"]["public_url"] == "https://abc.trycloudflare.com"
+
+
+@pytest.mark.asyncio
+async def test_lifespan_closes_pool_if_tunnel_start_fails(settings: Settings) -> None:
+    pool = TrackingPool()
+    tunnel = FailingStartTunnel()
+    app = create_app(settings, pool, tunnel, lambda: None)
+
+    with pytest.raises(RuntimeError, match="tunnel start failed"):
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert pool.cleanup_started is True
+    assert pool.closed is True
+    assert tunnel.stopped is False
