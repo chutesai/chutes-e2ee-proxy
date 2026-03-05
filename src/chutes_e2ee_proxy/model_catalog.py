@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import threading
 import time
+
 import httpx
+
+
+@dataclass(frozen=True)
+class ModelEntry:
+    model_id: str
+    chute_id: str
+    root: str
+    created: int
 
 
 class ModelCatalog:
@@ -14,7 +24,9 @@ class ModelCatalog:
         self._loaded_at = 0.0
         self._refresh_lock = threading.Lock()
         self._async_refresh_lock = asyncio.Lock()
-        self._model_map: dict[str, str] = {}
+        self._entries_by_id: dict[str, ModelEntry] = {}
+        self._entries_by_chute_id: dict[str, ModelEntry] = {}
+        self._entries_by_root: dict[str, ModelEntry] = {}
 
     @property
     def loaded_at(self) -> float:
@@ -22,7 +34,7 @@ class ModelCatalog:
 
     @property
     def exact_model_map(self) -> dict[str, str]:
-        return dict(self._model_map)
+        return {entry.model_id: entry.chute_id for entry in self._entries_by_id.values()}
 
     def invalidate(self) -> None:
         self._loaded_at = 0.0
@@ -31,14 +43,36 @@ class ModelCatalog:
         return time.time() - self._loaded_at >= self._ttl
 
     def _update_map(self, payload: dict) -> None:
-        model_map: dict[str, str] = {}
+        entries_by_id: dict[str, ModelEntry] = {}
+        entries_by_chute_id: dict[str, ModelEntry] = {}
+        entries_by_root: dict[str, ModelEntry] = {}
         for item in payload.get("data", []):
             model_id = item.get("id")
             chute_id = item.get("chute_id")
             if not model_id or not chute_id:
                 continue
-            model_map[model_id] = chute_id
-        self._model_map = model_map
+            root = item.get("root") or model_id
+            try:
+                created = int(item.get("created") or 0)
+            except (TypeError, ValueError):
+                created = 0
+
+            entry = ModelEntry(
+                model_id=model_id,
+                chute_id=chute_id,
+                root=root,
+                created=created,
+            )
+            entries_by_id[model_id] = entry
+            entries_by_chute_id[chute_id] = entry
+
+            current_root = entries_by_root.get(root)
+            if current_root is None or entry.created >= current_root.created:
+                entries_by_root[root] = entry
+
+        self._entries_by_id = entries_by_id
+        self._entries_by_chute_id = entries_by_chute_id
+        self._entries_by_root = entries_by_root
         self._loaded_at = time.time()
 
     def _fetch(self, client: httpx.Client) -> None:
@@ -83,24 +117,11 @@ class ModelCatalog:
             async with httpx.AsyncClient() as owned_client:
                 await self._fetch_async(owned_client)
 
-    def resolve(self, model: str, client: httpx.Client | None = None) -> str | None:
-        self.maybe_refresh(client)
-        chute_id = self._model_map.get(model)
-        if chute_id is not None:
-            return chute_id
-        self.invalidate()
-        self.maybe_refresh(client)
-        return self._model_map.get(model)
+    def get_by_id(self, model_id: str) -> ModelEntry | None:
+        return self._entries_by_id.get(model_id)
 
-    async def resolve_async(
-        self,
-        model: str,
-        client: httpx.AsyncClient | None = None,
-    ) -> str | None:
-        await self.maybe_refresh_async(client)
-        chute_id = self._model_map.get(model)
-        if chute_id is not None:
-            return chute_id
-        self.invalidate()
-        await self.maybe_refresh_async(client)
-        return self._model_map.get(model)
+    def get_by_root(self, root: str) -> ModelEntry | None:
+        return self._entries_by_root.get(root)
+
+    def get_by_chute_id(self, chute_id: str) -> ModelEntry | None:
+        return self._entries_by_chute_id.get(chute_id)
