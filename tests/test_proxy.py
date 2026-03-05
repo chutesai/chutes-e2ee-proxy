@@ -236,6 +236,56 @@ async def test_upstream_403_passthrough_preserves_body(app, fake_pool: FakePool)
 
 
 @pytest.mark.asyncio
+async def test_upstream_429_passthrough_preserves_body(app, fake_pool: FakePool) -> None:
+    transport = await fake_pool.get("token-429")
+    transport.response = httpx.Response(
+        429,
+        headers={"content-type": "application/json"},
+        content=b'{"detail":"Instance is at maximum capacity, try again later"}',
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/chat/completions", headers={"Authorization": "Bearer token-429"})
+
+    assert response.status_code == 429
+    assert response.json()["detail"] == "Instance is at maximum capacity, try again later"
+
+
+@pytest.mark.asyncio
+async def test_upstream_error_html_body_passthrough(app, fake_pool: FakePool) -> None:
+    transport = await fake_pool.get("token-html")
+    html = b"<html><body><h1>403 Forbidden</h1></body></html>"
+    transport.response = httpx.Response(
+        403,
+        headers={"content-type": "text/html"},
+        content=html,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/chat/completions", headers={"Authorization": "Bearer token-html"})
+
+    assert response.status_code == 403
+    assert response.content == html
+    assert response.headers["content-type"].startswith("text/html")
+
+
+@pytest.mark.asyncio
+async def test_upstream_error_empty_body_passthrough(app, fake_pool: FakePool) -> None:
+    transport = await fake_pool.get("token-empty")
+    transport.response = httpx.Response(
+        403,
+        headers={"content-type": "text/plain"},
+        content=b"",
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/chat/completions", headers={"Authorization": "Bearer token-empty"})
+
+    assert response.status_code == 403
+    assert response.content == b""
+
+
+@pytest.mark.asyncio
 async def test_http_status_error_passthrough(app, fake_pool: FakePool) -> None:
     transport = await fake_pool.get("token-status")
     req = httpx.Request("GET", "https://llm.chutes.ai/v1/models")

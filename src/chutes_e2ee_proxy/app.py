@@ -172,22 +172,23 @@ def create_app(
             upstream_response = await transport.handle_async_request(upstream_request)
 
             latency_ms = int((time.monotonic() - started) * 1000)
-            if upstream_response.status_code == 403:
+            if upstream_response.status_code >= 400:
                 body = await upstream_response.aread()
+                fields = {
+                    **log_ctx,
+                    "status_code": upstream_response.status_code,
+                    "latency_ms": latency_ms,
+                }
+                if body:
+                    fields["upstream_detail"] = _error_preview(body)
+
                 logger.warning(
-                    "upstream forbidden passthrough",
-                    extra={
-                        "fields": {
-                            **log_ctx,
-                            "status_code": 403,
-                            "latency_ms": latency_ms,
-                            "upstream_detail": _error_preview(body),
-                        }
-                    },
+                    "upstream error passthrough",
+                    extra={"fields": fields},
                 )
                 return Response(
                     content=body,
-                    status_code=403,
+                    status_code=upstream_response.status_code,
                     headers=_filter_response_headers(upstream_response.headers),
                 )
 
@@ -232,15 +233,15 @@ def create_app(
             return _json_proxy_error(504, "upstream timeout")
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
-            fields = {
+            log_fields = {
                 **log_ctx,
                 "status_code": status_code,
             }
-            if status_code == 403:
-                fields["upstream_detail"] = _error_preview(exc.response.content)
-            logger.info(
+            if exc.response.content:
+                log_fields["upstream_detail"] = _error_preview(exc.response.content)
+            logger.warning(
                 "upstream status error passthrough",
-                extra={"fields": fields},
+                extra={"fields": log_fields},
             )
             return Response(
                 content=exc.response.content,
