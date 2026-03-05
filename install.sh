@@ -201,10 +201,10 @@ EOF
 install_proxy() {
   add_local_bins_to_path
   if command -v uv >/dev/null 2>&1; then
-    log "Installing chutes-e2ee-proxy via uv..."
+    log "Installing chutes-e2ee-proxy from GitHub main via uv..."
     local uv_err
     uv_err="$(mktemp)"
-    if uv tool install --upgrade chutes-e2ee-proxy </dev/null 2>"$uv_err"; then
+    if uv tool install --upgrade --force "$REPO_FALLBACK" </dev/null 2>"$uv_err"; then
       rm -f "$uv_err"
       return 0
     fi
@@ -214,13 +214,13 @@ install_proxy() {
       log "Existing chutes-e2ee-proxy executable detected; using pipx upgrade path."
     else
       rm -f "$uv_err"
-      if uv tool install --upgrade --force chutes-e2ee-proxy </dev/null; then
-        return 0
-      fi
       if uv tool install --upgrade "$REPO_FALLBACK" </dev/null; then
         return 0
       fi
-      if uv tool install --upgrade --force "$REPO_FALLBACK" </dev/null; then
+      if uv tool install --upgrade --force chutes-e2ee-proxy </dev/null; then
+        return 0
+      fi
+      if uv tool install --upgrade chutes-e2ee-proxy </dev/null; then
         return 0
       fi
       log "uv installation failed; falling back to pipx..."
@@ -228,11 +228,13 @@ install_proxy() {
   fi
 
   ensure_pipx
+  log "Installing chutes-e2ee-proxy from GitHub main via pipx..."
+  if pipx install --force "$REPO_FALLBACK" </dev/null; then
+    return 0
+  fi
   if pipx list 2>/dev/null | grep -q 'package chutes-e2ee-proxy'; then
-    log "Upgrading chutes-e2ee-proxy..."
     pipx upgrade chutes-e2ee-proxy </dev/null || pipx install "$REPO_FALLBACK" </dev/null
   else
-    log "Installing chutes-e2ee-proxy via pipx..."
     pipx install chutes-e2ee-proxy </dev/null || pipx install "$REPO_FALLBACK" </dev/null
   fi
 }

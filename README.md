@@ -36,7 +36,7 @@ PowerShell:
 irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
 ```
 
-The bootstrap scripts attempt `uv` first, then fall back to `pipx`.
+The bootstrap scripts attempt `uv` first, then fall back to `pipx`, and prefer installing from GitHub `main` so bootstrap behavior matches the latest repository updates.
 By default they run with `--tunnel auto` and also auto-generate/reuse local HTTPS certs under `~/.chutes-e2ee-proxy/certs`.
 This gives both local HTTPS and (when available) a cloudflared HTTPS tunnel from the same one-liner startup.
 If cloudflared is unavailable, they automatically fall back to local HTTPS only.

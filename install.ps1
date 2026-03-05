@@ -193,30 +193,32 @@ IP.2 = ::1
 
 function Install-Proxy($pyExec) {
     if (Get-Command uv -ErrorAction SilentlyContinue) {
-        Write-Log "Installing chutes-e2ee-proxy via uv..."
-        uv tool install --upgrade chutes-e2ee-proxy *> $null
+        Write-Log "Installing chutes-e2ee-proxy from GitHub main via uv..."
+        uv tool install --upgrade --force $RepoFallback *> $null
         if ($LASTEXITCODE -eq 0) { return }
-        uv tool install --upgrade --force chutes-e2ee-proxy *> $null
-        if ($LASTEXITCODE -eq 0) { return }
-
         uv tool install --upgrade $RepoFallback *> $null
         if ($LASTEXITCODE -eq 0) { return }
-        uv tool install --upgrade --force $RepoFallback *> $null
+
+        uv tool install --upgrade --force chutes-e2ee-proxy *> $null
+        if ($LASTEXITCODE -eq 0) { return }
+        uv tool install --upgrade chutes-e2ee-proxy *> $null
         if ($LASTEXITCODE -eq 0) { return }
 
         Write-Log "uv installation failed; falling back to pipx..."
     }
 
     Ensure-Pipx $pyExec
+    Write-Log "Installing chutes-e2ee-proxy from GitHub main via pipx..."
+    pipx install --force $RepoFallback 2>$null
+    if ($LASTEXITCODE -eq 0) { return }
+
     $pipxList = pipx list 2>$null
     if ($pipxList -match "package chutes-e2ee-proxy") {
-        Write-Log "Upgrading chutes-e2ee-proxy..."
         pipx upgrade chutes-e2ee-proxy 2>$null
         if ($LASTEXITCODE -ne 0) {
             pipx install $RepoFallback
         }
     } else {
-        Write-Log "Installing chutes-e2ee-proxy via pipx..."
         pipx install chutes-e2ee-proxy 2>$null
         if ($LASTEXITCODE -ne 0) {
             pipx install $RepoFallback
