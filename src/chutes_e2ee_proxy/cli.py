@@ -8,7 +8,6 @@ import socket
 import sys
 from dataclasses import asdict
 from importlib import metadata
-from urllib.parse import urlsplit
 
 import click
 import httpx
@@ -121,16 +120,10 @@ def _print_node_tls_hint() -> None:
     click.echo("    <your-app-command>")
 
 
-def _origin_from_base_url(base_url: str) -> str:
-    return base_url.rsplit("/v1", 1)[0]
-
-
 def _print_startup_hint(
     settings: Settings,
     local_base_url: str,
     bind_base_url: str,
-    local_health_ok: bool,
-    local_health_detail: str,
 ) -> None:
     click.echo("")
     click.echo("chutes-e2ee-proxy is running.")
@@ -139,14 +132,10 @@ def _print_startup_hint(
     click.echo(f"  base_url: {local_base_url}")
     if bind_base_url != local_base_url:
         click.echo(f"  bind_url:  {bind_base_url}")
-    click.echo(f"  health:    {'ok' if local_health_ok else local_health_detail}")
 
     if settings.tls_cert_file:
         click.echo("")
         _print_node_tls_hint()
-
-    click.echo("")
-    click.echo(f"Recommended endpoint now: {local_base_url}")
 
     if settings.tunnel is not TunnelMode.OFF:
         click.echo("")
@@ -154,29 +143,6 @@ def _print_startup_hint(
         click.echo("  waiting for cloudflared URL...")
 
     click.echo("")
-
-
-async def _check_health(
-    url: str,
-    *,
-    verify: bool,
-    retries: int,
-    delay_seconds: float,
-    timeout_seconds: float,
-) -> tuple[bool, str]:
-    last_error = "unknown error"
-    for attempt in range(retries):
-        try:
-            async with httpx.AsyncClient(timeout=timeout_seconds, verify=verify) as client:
-                response = await client.get(url)
-            if response.status_code == 200:
-                return True, "ok"
-            last_error = f"status={response.status_code}"
-        except Exception as exc:
-            last_error = str(exc)
-        if attempt < retries - 1:
-            await asyncio.sleep(delay_seconds)
-    return False, last_error
 
 
 async def _watch_tunnel_hint(
@@ -192,27 +158,11 @@ async def _watch_tunnel_hint(
     while True:
         snapshot = tunnel_manager.snapshot()
         if snapshot.public_url:
-            tunnel_base_url = f"{snapshot.public_url}/v1"
-            tunnel_health_url = f"{snapshot.public_url}/_chutes_proxy/health"
-            tunnel_health_ok, tunnel_health_detail = await _check_health(
-                tunnel_health_url,
-                verify=True,
-                retries=8,
-                delay_seconds=0.5,
-                timeout_seconds=5.0,
-            )
             click.echo("")
-            click.echo("Tunnel endpoint:")
-            click.echo(f"  base_url: {tunnel_base_url}")
-            click.echo(f"  health:   {'ok' if tunnel_health_ok else tunnel_health_detail}")
-            click.echo("Local fallback:")
+            click.echo("Tunnel endpoint (recommended compatibility):")
+            click.echo(f"  base_url: {snapshot.public_url}/v1")
+            click.echo("Local fallback endpoint:")
             click.echo(f"  base_url: {local_base_url}")
-            if tunnel_health_ok:
-                click.echo("")
-                click.echo(f"Recommended endpoint now: {tunnel_base_url}")
-            else:
-                click.echo("")
-                click.echo(f"Recommended endpoint now: {local_base_url}")
             click.echo("")
             return
 
@@ -292,28 +242,15 @@ async def _serve(settings: Settings) -> None:
     )
 
     local_base_url, bind_base_url = _local_base_urls(settings)
-    local_health_url = f"{_origin_from_base_url(bind_base_url)}/_chutes_proxy/health"
-    local_verify = urlsplit(bind_base_url).scheme != "https"
-
-    async def announce_endpoints() -> None:
-        local_ok, local_detail = await _check_health(
-            local_health_url,
-            verify=local_verify,
-            retries=20,
-            delay_seconds=0.2,
-            timeout_seconds=2.0,
-        )
-        _print_startup_hint(settings, local_base_url, bind_base_url, local_ok, local_detail)
-        await _watch_tunnel_hint(settings, tunnel_manager, local_base_url)
-
-    announce_task = asyncio.create_task(announce_endpoints())
+    _print_startup_hint(settings, local_base_url, bind_base_url)
+    tunnel_hint_task = asyncio.create_task(_watch_tunnel_hint(settings, tunnel_manager, local_base_url))
 
     try:
         await server.serve()
     finally:
-        announce_task.cancel()
+        tunnel_hint_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await announce_task
+            await tunnel_hint_task
 
 
 @main.command("doctor")
