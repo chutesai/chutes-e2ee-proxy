@@ -279,6 +279,12 @@ if [ -n "${CHUTES_TLS_KEY_FILE:-}" ] || has_flag --tls-key-file "$@"; then
   HAS_TLS_KEY=true
 fi
 
+if [ "$HAS_TLS_CERT" = false ] && [ "$HAS_TLS_KEY" = false ]; then
+  ensure_local_tls_cert
+  export CHUTES_TLS_CERT_FILE="$CERT_FILE"
+  export CHUTES_TLS_KEY_FILE="$KEY_FILE"
+fi
+
 if [ "$TUNNEL_MODE" != "off" ]; then
   if ! ensure_cloudflared; then
     if [ "$TUNNEL_MODE" = "required" ]; then
@@ -289,12 +295,6 @@ if [ "$TUNNEL_MODE" != "off" ]; then
     export CHUTES_PROXY_TUNNEL="off"
     TUNNEL_MODE="off"
   fi
-fi
-
-if [ "$TUNNEL_MODE" = "off" ] && [ "$HAS_TLS_CERT" = false ] && [ "$HAS_TLS_KEY" = false ]; then
-  ensure_local_tls_cert
-  export CHUTES_TLS_CERT_FILE="$CERT_FILE"
-  export CHUTES_TLS_KEY_FILE="$KEY_FILE"
 fi
 
 log "Starting chutes-e2ee-proxy..."

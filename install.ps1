@@ -251,6 +251,12 @@ if ([string]::IsNullOrWhiteSpace($env:CHUTES_PROXY_TUNNEL) -and -not (Has-Flag "
 $hasTlsCert = (-not [string]::IsNullOrWhiteSpace($env:CHUTES_TLS_CERT_FILE)) -or (Has-Flag "--tls-cert-file" $args)
 $hasTlsKey = (-not [string]::IsNullOrWhiteSpace($env:CHUTES_TLS_KEY_FILE)) -or (Has-Flag "--tls-key-file" $args)
 
+if (-not $hasTlsCert -and -not $hasTlsKey) {
+    Ensure-LocalTlsCert
+    $env:CHUTES_TLS_CERT_FILE = $CertFile
+    $env:CHUTES_TLS_KEY_FILE = $KeyFile
+}
+
 if ($tunnelMode -ne "off") {
     if (-not (Ensure-Cloudflared)) {
         if ($tunnelMode -eq "required") {
@@ -260,12 +266,6 @@ if ($tunnelMode -ne "off") {
         $env:CHUTES_PROXY_TUNNEL = "off"
         $tunnelMode = "off"
     }
-}
-
-if ($tunnelMode -eq "off" -and -not $hasTlsCert -and -not $hasTlsKey) {
-    Ensure-LocalTlsCert
-    $env:CHUTES_TLS_CERT_FILE = $CertFile
-    $env:CHUTES_TLS_KEY_FILE = $KeyFile
 }
 
 Write-Log "Starting chutes-e2ee-proxy..."
