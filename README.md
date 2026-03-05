@@ -4,6 +4,66 @@ Native, container-free E2EE proxy for Chutes. It accepts OpenAI-compatible HTTP 
 
 **TLDR:** the app is a thin local HTTPS proxy. It forwards client requests into an E2EE transport, that transport resolves the model using live Chutes metadata, encrypts the payload, sends it to the E2EE invoke path, then decrypts the response back into normal OpenAI-compatible output.
 
+## How E2EE Works
+
+There are two layers in flight:
+- an inner E2EE payload created locally for the chute runtime
+- an outer transport-encryption layer used between `chutes-api` and the target instance
+
+E2EE is not wired only to confidential chutes. In the current code, `chutes-api` treats an instance as E2EE-capable when it advertises an `e2e_pubkey`, so the same transport path can reach either a confidential chute instance (`env_type=tee`) or a validated chute instance (`env_type=graval`).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Proxy as Local Proxy / E2EE Transport
+    participant API as chutes-api
+    participant Runtime as Chute Runtime
+    participant Model
+
+    Client->>Proxy: Normal OpenAI-style JSON request
+    Note over Proxy: Build inner E2EE request locally
+    Proxy->>API: POST /e2e/invoke with inner E2EE blob
+    Note over API: Routes request but does not open the inner payload
+    API->>Runtime: Forward raw inner blob inside outer transport encryption
+
+    alt Confidential chute instance (env_type=tee)
+        Note over Runtime: Plaintext exists inside the confidential chute process
+    else Validated chute instance (env_type=graval)
+        Note over Runtime: Same E2EE flow, but plaintext exists inside the validated chute process
+    end
+
+    Note over Runtime: Decrypt transport layer and inner E2EE payload
+    Runtime->>Model: Plaintext request
+    Model-->>Runtime: Plaintext output
+
+    alt Streaming response
+        Runtime-->>API: Re-encrypted E2EE chunks
+        API-->>Proxy: Relay encrypted chunks
+        Proxy-->>Client: Decrypted SSE stream
+        Note over API,Proxy: Streaming usage SSE events are plaintext for billing
+    else Non-streaming response
+        Runtime-->>API: Inner E2EE response wrapped in outer transport encryption
+        API-->>Proxy: Outer layer unwrapped, inner payload untouched
+        Proxy-->>Client: Decrypted JSON response
+    end
+```
+
+In plain terms:
+- your client sends a normal OpenAI-style request to the local proxy
+- the local E2EE transport encrypts the request body before it goes to Chutes
+- `chutes-api` routes the encrypted payload but does not open the inner E2EE body
+- the request is decrypted inside the running chute process so the model can process it
+- the response is re-encrypted inside the chute before it leaves
+- the local E2EE transport decrypts it back into the normal response format your client expects
+
+Plaintext exists in two places only:
+- locally before encryption and after final decryption
+- inside the running chute runtime while the model is processing the request
+- if that instance is confidential (`env_type=tee`), that plaintext exists inside the confidential chute process; otherwise it exists inside the validated chute process (`env_type=graval`)
+
+Note: streamed `usage` events are surfaced in plaintext SSE for billing/metrics, even though the actual streamed model chunks remain E2EE-encrypted.
+
 ## Quick Start (One-line bootstrap)
 
 macOS/Linux:
