@@ -41,7 +41,7 @@ Bootstrap defaults:
 If cloudflared is unavailable, bootstrap automatically falls back to local HTTPS only.
 Pass `--tunnel off` to force local-only HTTPS.
 
-## How E2EE Works
+## How E2EE Works on Chutes
 
 There are two layers in flight:
 - an inner E2EE payload created locally for the chute runtime
