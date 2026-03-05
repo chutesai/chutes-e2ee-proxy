@@ -4,6 +4,43 @@ Native, container-free E2EE proxy for Chutes. It accepts OpenAI-compatible HTTP 
 
 **TLDR:** the app is a thin local HTTPS proxy. It forwards client requests into an E2EE transport, that transport resolves the model using live Chutes metadata, encrypts the payload, sends it to the E2EE invoke path, then decrypts the response back into normal OpenAI-compatible output.
 
+## Quick Start (One-line bootstrap)
+
+macOS/Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
+```
+
+Windows Git Bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
+
+Windows WSL:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
+
+The bootstrap scripts attempt `uv` first, then fall back to `pipx`, and prefer installing from GitHub `main` so bootstrap behavior matches the latest repository updates.
+
+Bootstrap defaults:
+- auto-generate/reuse local HTTPS certs under `~/.chutes-e2ee-proxy/certs`
+- run with tunnel mode `auto`
+- expose both local HTTPS and (when available) a cloudflared HTTPS endpoint
+- when mkcert is available, configure cloudflared origin verification using `CHUTES_CLOUDFLARED_ORIGIN_CA_POOL`
+
+If cloudflared is unavailable, bootstrap automatically falls back to local HTTPS only.
+Pass `--tunnel off` to force local-only HTTPS.
+
 ## How E2EE Works
 
 There are two layers in flight:
@@ -63,43 +100,6 @@ Plaintext exists in two places only:
 - if that instance is confidential (`env_type=tee`), that plaintext exists inside the confidential chute process; otherwise it exists inside the validated chute process (`env_type=graval`)
 
 Note: streamed `usage` events are surfaced in plaintext SSE for billing/metrics, even though the actual streamed model chunks remain E2EE-encrypted.
-
-## Quick Start (One-line bootstrap)
-
-macOS/Linux:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
-```
-
-Windows PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
-```
-
-Windows Git Bash:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
-```
-
-Windows WSL:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
-```
-
-The bootstrap scripts attempt `uv` first, then fall back to `pipx`, and prefer installing from GitHub `main` so bootstrap behavior matches the latest repository updates.
-
-Bootstrap defaults:
-- auto-generate/reuse local HTTPS certs under `~/.chutes-e2ee-proxy/certs`
-- run with tunnel mode `auto`
-- expose both local HTTPS and (when available) a cloudflared HTTPS endpoint
-- when mkcert is available, configure cloudflared origin verification using `CHUTES_CLOUDFLARED_ORIGIN_CA_POOL`
-
-If cloudflared is unavailable, bootstrap automatically falls back to local HTTPS only.
-Pass `--tunnel off` to force local-only HTTPS.
 
 ## Install
 
