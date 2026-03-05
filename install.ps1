@@ -1,4 +1,7 @@
 $ErrorActionPreference = "Stop"
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 
 $proxyRef = if ([string]::IsNullOrWhiteSpace($env:CHUTES_PROXY_GIT_REF)) { "main" } else { $env:CHUTES_PROXY_GIT_REF.Trim() }
 $RepoFallback = "git+https://github.com/chutesai/chutes-e2ee-proxy.git@$proxyRef"
