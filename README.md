@@ -37,9 +37,13 @@ irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps
 ```
 
 The bootstrap scripts attempt `uv` first, then fall back to `pipx`, and prefer installing from GitHub `main` so bootstrap behavior matches the latest repository updates.
-By default they run with `--tunnel auto` and also auto-generate/reuse local HTTPS certs under `~/.chutes-e2ee-proxy/certs`.
-This gives both local HTTPS and (when available) a cloudflared HTTPS tunnel from the same one-liner startup.
-If cloudflared is unavailable, they automatically fall back to local HTTPS only.
+
+Bootstrap defaults:
+- auto-generate/reuse local HTTPS certs under `~/.chutes-e2ee-proxy/certs`
+- run with tunnel mode `auto`
+- expose both local HTTPS and (when available) a cloudflared HTTPS endpoint
+
+If cloudflared is unavailable, bootstrap automatically falls back to local HTTPS only.
 Pass `--tunnel off` to force local-only HTTPS.
 Set `CHUTES_PROXY_GIT_REF` to pin bootstrap installs to a specific tag or commit:
 
@@ -59,7 +63,10 @@ CHUTES_PROXY_UV_REQUIRED=1 curl -fsSL https://raw.githubusercontent.com/chutesai
 chutes-e2ee-proxy serve
 ```
 
-Default local URL: `http://127.0.0.1:8787`
+Direct `serve` defaults:
+- local URL is `http://127.0.0.1:8787`
+- TLS is disabled unless `--tls-cert-file` and `--tls-key-file` (or env equivalents) are provided
+- tunnel mode defaults to `auto`
 
 Point your client `base_url` to that local URL (or the tunnel URL if enabled) and keep using your normal `Authorization: Bearer ...` key.
 
