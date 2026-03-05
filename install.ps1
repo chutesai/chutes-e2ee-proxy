@@ -11,11 +11,28 @@ function Write-Log($msg) {
     Write-Host "[install] $msg"
 }
 
+function Invoke-NativeQuiet([string]$command, [string[]]$arguments) {
+    try {
+        & $command @arguments *> $null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
 function Add-LocalBinsToPath {
     $localBin = Join-Path $HOME ".local\bin"
     if ($env:Path -notlike "*$localBin*") {
         $env:Path = "$localBin;$env:Path"
     }
+}
+
+function Resolve-UVCommand {
+    $uvExe = Get-Command uv.exe -ErrorAction SilentlyContinue
+    if ($uvExe) { return $uvExe.Source }
+    $uv = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uv) { return $uv.Source }
+    return $null
 }
 
 function Has-Flag($flag, [string[]]$arguments) {
@@ -84,14 +101,16 @@ function Require-Python {
 
 function Ensure-UV {
     Add-LocalBinsToPath
-    if (Get-Command uv -ErrorAction SilentlyContinue) { return $true }
+    if (Resolve-UVCommand) { return $true }
 
     Write-Log "uv not found, attempting installation..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id astral-sh.uv --accept-package-agreements --accept-source-agreements *> $null
+        if (-not (Invoke-NativeQuiet "winget" @("install", "--id", "astral-sh.uv", "--accept-package-agreements", "--accept-source-agreements"))) {
+            Write-Log "winget could not install uv; trying fallback."
+        }
     }
 
-    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+    if (-not (Resolve-UVCommand)) {
         try {
             irm https://astral.sh/uv/install.ps1 | iex
         } catch {
@@ -100,7 +119,7 @@ function Ensure-UV {
     }
 
     Add-LocalBinsToPath
-    if (Get-Command uv -ErrorAction SilentlyContinue) { return $true }
+    if (Resolve-UVCommand) { return $true }
     return $false
 }
 
@@ -193,17 +212,14 @@ IP.2 = ::1
 }
 
 function Install-Proxy($pyExec) {
-    if (Get-Command uv -ErrorAction SilentlyContinue) {
+    $uvCmd = Resolve-UVCommand
+    if ($uvCmd) {
         Write-Log "Installing chutes-e2ee-proxy from GitHub ref '$proxyRef' via uv..."
-        uv tool install --upgrade --force $RepoFallback *> $null
-        if ($LASTEXITCODE -eq 0) { return }
-        uv tool install --upgrade $RepoFallback *> $null
-        if ($LASTEXITCODE -eq 0) { return }
+        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", $RepoFallback)) { return }
+        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", $RepoFallback)) { return }
 
-        uv tool install --upgrade --force chutes-e2ee-proxy *> $null
-        if ($LASTEXITCODE -eq 0) { return }
-        uv tool install --upgrade chutes-e2ee-proxy *> $null
-        if ($LASTEXITCODE -eq 0) { return }
+        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", "chutes-e2ee-proxy")) { return }
+        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "chutes-e2ee-proxy")) { return }
 
         Write-Log "uv installation failed; falling back to pipx..."
     }
