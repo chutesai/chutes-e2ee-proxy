@@ -30,18 +30,32 @@ def test_local_base_urls_keep_custom_host() -> None:
 
 def test_startup_hint_prints_local_tls_trust_guidance(capsys) -> None:
     settings = _settings(tunnel=TunnelMode.OFF, tls=True)
-    _print_startup_hint(settings, "https://localhost:8787/v1", "https://127.0.0.1:8787/v1")
+    _print_startup_hint(
+        settings,
+        "https://localhost:8787/v1",
+        "https://127.0.0.1:8787/v1",
+        True,
+        "ok",
+    )
 
     output = capsys.readouterr().out
     assert "Local endpoint:" in output
     assert "base_url: https://localhost:8787/v1" in output
+    assert "health:    ok" in output
+    assert "Recommended endpoint now: https://localhost:8787/v1" in output
     assert "NODE_EXTRA_CA_CERTS" in output
     assert "waiting for cloudflared URL" not in output
 
 
 def test_startup_hint_prints_tunnel_wait_message(capsys) -> None:
     settings = _settings(tunnel=TunnelMode.AUTO, tls=False)
-    _print_startup_hint(settings, "http://localhost:8787/v1", "http://127.0.0.1:8787/v1")
+    _print_startup_hint(
+        settings,
+        "http://localhost:8787/v1",
+        "http://127.0.0.1:8787/v1",
+        True,
+        "ok",
+    )
 
     output = capsys.readouterr().out
     assert "Tunnel endpoint (recommended compatibility):" in output

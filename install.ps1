@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-$RepoFallback = "git+https://github.com/chutesai/chutes-e2ee-proxy.git"
+$proxyRef = if ([string]::IsNullOrWhiteSpace($env:CHUTES_PROXY_GIT_REF)) { "main" } else { $env:CHUTES_PROXY_GIT_REF.Trim() }
+$RepoFallback = "git+https://github.com/chutesai/chutes-e2ee-proxy.git@$proxyRef"
 $StateDir = Join-Path $HOME ".chutes-e2ee-proxy"
 $CertDir = Join-Path $StateDir "certs"
 $CertFile = Join-Path $CertDir "localhost.pem"
@@ -193,7 +194,7 @@ IP.2 = ::1
 
 function Install-Proxy($pyExec) {
     if (Get-Command uv -ErrorAction SilentlyContinue) {
-        Write-Log "Installing chutes-e2ee-proxy from GitHub main via uv..."
+        Write-Log "Installing chutes-e2ee-proxy from GitHub ref '$proxyRef' via uv..."
         uv tool install --upgrade --force $RepoFallback *> $null
         if ($LASTEXITCODE -eq 0) { return }
         uv tool install --upgrade $RepoFallback *> $null
@@ -208,7 +209,7 @@ function Install-Proxy($pyExec) {
     }
 
     Ensure-Pipx $pyExec
-    Write-Log "Installing chutes-e2ee-proxy from GitHub main via pipx..."
+    Write-Log "Installing chutes-e2ee-proxy from GitHub ref '$proxyRef' via pipx..."
     pipx install --force $RepoFallback 2>$null
     if ($LASTEXITCODE -eq 0) { return }
 

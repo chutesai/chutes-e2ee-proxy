@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_FALLBACK="git+https://github.com/chutesai/chutes-e2ee-proxy.git"
+PROXY_REF="${CHUTES_PROXY_GIT_REF:-main}"
+REPO_FALLBACK="git+https://github.com/chutesai/chutes-e2ee-proxy.git@${PROXY_REF}"
 STATE_DIR="${HOME}/.chutes-e2ee-proxy"
 CERT_DIR="${STATE_DIR}/certs"
 CERT_FILE="${CERT_DIR}/localhost.pem"
@@ -201,7 +202,7 @@ EOF
 install_proxy() {
   add_local_bins_to_path
   if command -v uv >/dev/null 2>&1; then
-    log "Installing chutes-e2ee-proxy from GitHub main via uv..."
+    log "Installing chutes-e2ee-proxy from GitHub ref '${PROXY_REF}' via uv..."
     local uv_err
     uv_err="$(mktemp)"
     if uv tool install --upgrade --force "$REPO_FALLBACK" </dev/null 2>"$uv_err"; then
@@ -228,7 +229,7 @@ install_proxy() {
   fi
 
   ensure_pipx
-  log "Installing chutes-e2ee-proxy from GitHub main via pipx..."
+  log "Installing chutes-e2ee-proxy from GitHub ref '${PROXY_REF}' via pipx..."
   if pipx install --force "$REPO_FALLBACK" </dev/null; then
     return 0
   fi

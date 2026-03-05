@@ -1,0 +1,127 @@
+name: Canary E2EE
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: Canary (live key)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CHUTES_API_KEY: ${{ secrets.CHUTES_API_KEY }}
+      CHUTES_CANARY_MODEL: ${{ secrets.CHUTES_CANARY_MODEL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Validate required secret
+        run: |
+          if [ -z "${CHUTES_API_KEY:-}" ]; then
+            echo "Missing repository secret CHUTES_API_KEY"
+            exit 1
+          fi
+
+      - name: Start proxy
+        run: |
+          CHUTES_PROXY_TUNNEL=off CHUTES_LOG_LEVEL=warning chutes-e2ee-proxy serve --host 127.0.0.1 --port 8787 > /tmp/chutes-proxy.log 2>&1 &
+          echo $! > /tmp/chutes-proxy.pid
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8787/_chutes_proxy/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Proxy did not become healthy in time"
+          exit 1
+
+      - name: Run live canary
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import httpx
+
+          api_key = os.environ["CHUTES_API_KEY"]
+          preferred_model = os.environ.get("CHUTES_CANARY_MODEL", "").strip()
+          base_url = "http://127.0.0.1:8787/v1"
+          headers = {"Authorization": f"Bearer {api_key}"}
+
+          with httpx.Client(timeout=60.0) as client:
+              models_resp = client.get(f"{base_url}/models", headers=headers)
+              models_resp.raise_for_status()
+              models = models_resp.json().get("data") or []
+              if not models:
+                  raise RuntimeError("No models returned from /v1/models")
+
+              model_ids = [m.get("id") for m in models if m.get("id")]
+              model = None
+              if preferred_model and preferred_model in model_ids:
+                  model = preferred_model
+              else:
+                  tee_ids = [m for m in model_ids if "TEE" in m]
+                  model = tee_ids[0] if tee_ids else model_ids[0]
+
+              print(f"Using canary model: {model}")
+
+              payload = {
+                  "model": model,
+                  "messages": [{"role": "user", "content": "Reply with: ok"}],
+                  "max_tokens": 8,
+                  "temperature": 0,
+                  "stream": False,
+              }
+              non_stream = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+              non_stream.raise_for_status()
+              body = non_stream.json()
+              if "choices" not in body:
+                  raise RuntimeError(f"Unexpected non-stream response shape: {json.dumps(body)[:500]}")
+
+              stream_payload = dict(payload)
+              stream_payload["stream"] = True
+              with client.stream(
+                  "POST",
+                  f"{base_url}/chat/completions",
+                  headers=headers,
+                  json=stream_payload,
+              ) as stream_resp:
+                  stream_resp.raise_for_status()
+                  got_done = False
+                  for line in stream_resp.iter_lines():
+                      if line and "[DONE]" in line:
+                          got_done = True
+                          break
+                  if not got_done:
+                      raise RuntimeError("Streaming response did not include [DONE]")
+
+          print("Canary passed")
+          PY
+
+      - name: Stop proxy
+        if: always()
+        run: |
+          if [ -f /tmp/chutes-proxy.pid ]; then
+            kill "$(cat /tmp/chutes-proxy.pid)" || true
+          fi
+          sleep 1
+          cat /tmp/chutes-proxy.log || true

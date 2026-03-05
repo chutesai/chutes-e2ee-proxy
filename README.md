@@ -41,6 +41,11 @@ By default they run with `--tunnel auto` and also auto-generate/reuse local HTTP
 This gives both local HTTPS and (when available) a cloudflared HTTPS tunnel from the same one-liner startup.
 If cloudflared is unavailable, they automatically fall back to local HTTPS only.
 Pass `--tunnel off` to force local-only HTTPS.
+Set `CHUTES_PROXY_GIT_REF` to pin bootstrap installs to a specific tag or commit:
+
+```bash
+CHUTES_PROXY_GIT_REF=v0.1.0 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
 
 ## Run
 
@@ -130,3 +135,12 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 pytest
 ```
+
+## Canary CI (Live Key)
+
+A nightly canary workflow (`.github/workflows/canary.yml`) can run a real `/v1/models`, non-stream completion, and streaming completion through the proxy.
+
+Set repository secrets in GitHub:
+1. `Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`
+2. Add `CHUTES_API_KEY` (required)
+3. Optionally add `CHUTES_CANARY_MODEL` (specific model id to force)
