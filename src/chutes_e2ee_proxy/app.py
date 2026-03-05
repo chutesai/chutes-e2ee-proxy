@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import AsyncIterator
 
@@ -98,7 +98,12 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: Starlette):
         pool.start_cleanup_task()
-        await tunnel.start()
+        try:
+            await tunnel.start()
+        except BaseException:
+            with suppress(Exception):
+                await pool.close_all()
+            raise
         try:
             yield
         finally:

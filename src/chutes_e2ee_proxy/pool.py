@@ -1,12 +1,25 @@
+"""Transport pooling with compatibility shims for split upstream topology.
+
+This proxy may need different upstream hosts for:
+- model listing (`/v1/models`) on the OpenAI-compatible host
+- E2EE discovery/invoke (`/e2e/*`) on the API host
+
+When those hosts differ, a DiscoveryManager shim routes model-map refreshes to the
+OpenAI-compatible host while keeping nonce discovery on the API host.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
 import httpx
+
+_LOGGER = logging.getLogger("chutes_e2ee_proxy.pool")
 
 
 @dataclass
@@ -45,7 +58,32 @@ class TransportPool:
         if upstream == e2e_upstream:
             return AsyncChutesE2EETransport(api_key=api_key, api_base=e2e_upstream)
 
+        required_discovery_methods = (
+            "_maybe_refresh_model_map",
+            "_maybe_refresh_model_map_async",
+        )
+        missing_methods = [
+            method for method in required_discovery_methods if not hasattr(DiscoveryManager, method)
+        ]
+        if missing_methods:
+            joined = ", ".join(sorted(missing_methods))
+            raise RuntimeError(
+                "Split discovery compatibility shim is incompatible with installed chutes-e2ee: "
+                f"DiscoveryManager is missing required methods: {joined}. "
+                "Upgrade/downgrade chutes-e2ee or set --e2e-upstream equal to --upstream."
+            )
+
         class _SplitModelDiscoveryManager(DiscoveryManager):
+            """Compatibility shim for split upstream topology.
+
+            Why this exists:
+            - /v1/models currently resolves on the OpenAI-compatible upstream (for example llm.chutes.ai)
+            - /e2e/* discovery+invoke resolves on the API upstream (for example api.chutes.ai)
+
+            The upstream/e2e split requires overriding only model-map refresh while leaving
+            nonce + instance discovery on DiscoveryManager's configured api_base.
+            """
+
             def __init__(self, model_api_base: str, e2e_api_base: str, key: str):
                 super().__init__(api_base=e2e_api_base, api_key=key)
                 self._model_api_base = model_api_base.rstrip("/")
@@ -94,11 +132,45 @@ class TransportPool:
                 self._model_map_loaded_at = time.time()
 
         transport = AsyncChutesE2EETransport(api_key=api_key, api_base=e2e_upstream)
-        transport._discovery = _SplitModelDiscoveryManager(
+        discovery = getattr(transport, "_discovery", None)
+        if discovery is None:
+            raise RuntimeError(
+                "Split discovery compatibility shim is incompatible with installed chutes-e2ee: "
+                "AsyncChutesE2EETransport has no _discovery attribute."
+            )
+
+        required_discovery_attrs = (
+            "_model_map",
+            "_model_map_loaded_at",
+            "_MODEL_MAP_TTL",
+            "_auth_headers",
+            "_model_map_lock",
+        )
+        missing_attrs = [
+            attr for attr in required_discovery_attrs if not hasattr(discovery, attr)
+        ]
+        if missing_attrs:
+            joined = ", ".join(sorted(missing_attrs))
+            raise RuntimeError(
+                "Split discovery compatibility shim is incompatible with installed chutes-e2ee: "
+                f"discovery object is missing required fields: {joined}. "
+                "Upgrade/downgrade chutes-e2ee or set --e2e-upstream equal to --upstream."
+            )
+
+        try:
+            transport._discovery = discovery
+        except Exception as exc:  # pragma: no cover - defensive branch
+            raise RuntimeError(
+                "Split discovery compatibility shim cannot be applied because "
+                "AsyncChutesE2EETransport._discovery is not writable."
+            ) from exc
+
+        split_discovery = _SplitModelDiscoveryManager(
             model_api_base=upstream,
             e2e_api_base=e2e_upstream,
             key=api_key,
         )
+        transport._discovery = split_discovery
         return transport
 
     def start_cleanup_task(self) -> None:
@@ -173,14 +245,21 @@ class TransportPool:
         await self.close_all()
 
     async def _close_transport(self, transport: Any) -> None:
-        close_fn = getattr(transport, "aclose", None)
-        if close_fn is not None:
-            await close_fn()
-            return
+        try:
+            close_fn = getattr(transport, "aclose", None)
+            if close_fn is not None:
+                await close_fn()
+                return
 
-        close_sync = getattr(transport, "close", None)
-        if close_sync is not None:
-            close_sync()
+            close_sync = getattr(transport, "close", None)
+            if close_sync is not None:
+                close_sync()
+        except Exception as exc:  # pragma: no cover - defensive branch
+            _LOGGER.warning(
+                "transport close failed",
+                extra={"fields": {"transport_type": type(transport).__name__}},
+                exc_info=exc,
+            )
 
     def stats(self) -> dict[str, int | float]:
         return {

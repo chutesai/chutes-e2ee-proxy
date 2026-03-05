@@ -8,6 +8,7 @@ import socket
 import sys
 from dataclasses import asdict
 from importlib import metadata
+from urllib.parse import urlparse
 
 import click
 import httpx
@@ -108,6 +109,20 @@ def _local_base_urls(settings: Settings) -> tuple[str, str]:
         display_host = "localhost"
     display_base_url = f"{scheme}://{display_host}:{settings.port}/v1"
     return display_base_url, bind_base_url
+
+
+def _socket_target_for_url(url: str) -> tuple[str, int]:
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"Invalid URL host: {url}")
+    if parsed.port is not None:
+        return hostname, parsed.port
+    if parsed.scheme == "https":
+        return hostname, 443
+    if parsed.scheme == "http":
+        return hostname, 80
+    raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
 
 
 def _print_node_tls_hint() -> None:
@@ -291,11 +306,11 @@ def doctor_command(upstream: str | None, e2e_upstream: str | None, cloudflared_b
     else:
         checks.append(("WARN", "cloudflared", "not found (tunnel auto mode will continue without it)"))
 
-    upstream_host = settings.upstream.split("://", 1)[-1].split("/", 1)[0]
     try:
-        with socket.create_connection((upstream_host, 443), timeout=5):
-            checks.append(("PASS", "upstream_tcp", f"{upstream_host}:443 reachable"))
-    except OSError as exc:
+        upstream_host, upstream_port = _socket_target_for_url(settings.upstream)
+        with socket.create_connection((upstream_host, upstream_port), timeout=5):
+            checks.append(("PASS", "upstream_tcp", f"{upstream_host}:{upstream_port} reachable"))
+    except (ValueError, OSError) as exc:
         checks.append(("FAIL", "upstream_tcp", str(exc)))
 
     try:
@@ -307,11 +322,11 @@ def doctor_command(upstream: str | None, e2e_upstream: str | None, cloudflared_b
     except Exception as exc:
         checks.append(("FAIL", "upstream_http", str(exc)))
 
-    e2e_host = settings.e2e_upstream.split("://", 1)[-1].split("/", 1)[0]
     try:
-        with socket.create_connection((e2e_host, 443), timeout=5):
-            checks.append(("PASS", "e2e_tcp", f"{e2e_host}:443 reachable"))
-    except OSError as exc:
+        e2e_host, e2e_port = _socket_target_for_url(settings.e2e_upstream)
+        with socket.create_connection((e2e_host, e2e_port), timeout=5):
+            checks.append(("PASS", "e2e_tcp", f"{e2e_host}:{e2e_port} reachable"))
+    except (ValueError, OSError) as exc:
         checks.append(("FAIL", "e2e_tcp", str(exc)))
 
     try:
