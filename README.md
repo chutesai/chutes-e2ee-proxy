@@ -2,27 +2,7 @@
 
 Native, container-free E2EE proxy for Chutes. It accepts OpenAI-compatible HTTP requests locally, forwards them through `chutes-e2ee-transport`, and returns upstream responses transparently.
 
-## Install
-
-### Primary (uv)
-
-```bash
-uv tool install --upgrade chutes-e2ee-proxy
-```
-
-If the package is not on PyPI yet:
-
-```bash
-uv tool install --upgrade git+https://github.com/chutesai/chutes-e2ee-proxy.git
-```
-
-### Alternative (pipx)
-
-```bash
-pipx install chutes-e2ee-proxy || pipx install git+https://github.com/chutesai/chutes-e2ee-proxy.git
-```
-
-### One-line bootstrap (quick start)
+## Quick Start (One-line bootstrap)
 
 macOS/Linux:
 
@@ -47,8 +27,6 @@ Windows WSL:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
 ```
-
-On Windows, `install.ps1` delegates to `install.sh` when bash is available (Git Bash/WSL); otherwise it uses the PowerShell-native fallback path.
 
 The bootstrap scripts attempt `uv` first, then fall back to `pipx`, and prefer installing from GitHub `main` so bootstrap behavior matches the latest repository updates.
 
@@ -81,6 +59,26 @@ PowerShell equivalent:
 
 ```powershell
 $env:CHUTES_PROXY_UV_REQUIRED="1"; irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
+```
+
+## Install
+
+### Primary (uv)
+
+```bash
+uv tool install --upgrade chutes-e2ee-proxy
+```
+
+If the package is not on PyPI yet:
+
+```bash
+uv tool install --upgrade git+https://github.com/chutesai/chutes-e2ee-proxy.git
+```
+
+### Alternative (pipx)
+
+```bash
+pipx install chutes-e2ee-proxy || pipx install git+https://github.com/chutesai/chutes-e2ee-proxy.git
 ```
 
 ## Run
