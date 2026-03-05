@@ -22,27 +22,33 @@ uv tool install --upgrade git+https://github.com/chutesai/chutes-e2ee-proxy.git
 pipx install chutes-e2ee-proxy || pipx install git+https://github.com/chutesai/chutes-e2ee-proxy.git
 ```
 
-### One-line bootstrap
+### One-line bootstrap (quick start)
 
-macOS/Linux/Git Bash:
+macOS/Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
 ```
 
-PowerShell:
+Windows PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
 ```
 
-On Windows with Git Bash available, the PowerShell bootstrap now delegates to `install.sh`
-so macOS/Linux/Git Bash and PowerShell share the same installer flow.
-You can also run the same bash one-liner directly in Git Bash:
+Windows Git Bash:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
 ```
+
+Windows WSL:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
+
+On Windows, `install.ps1` delegates to `install.sh` when bash is available (Git Bash/WSL); otherwise it uses the PowerShell-native fallback path.
 
 The bootstrap scripts attempt `uv` first, then fall back to `pipx`, and prefer installing from GitHub `main` so bootstrap behavior matches the latest repository updates.
 
@@ -59,10 +65,22 @@ Set `CHUTES_PROXY_GIT_REF` to pin bootstrap installs to a specific tag or commit
 CHUTES_PROXY_GIT_REF=v0.1.0 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
 ```
 
+PowerShell equivalent:
+
+```powershell
+$env:CHUTES_PROXY_GIT_REF="v0.1.0"; irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
+```
+
 Require uv-only installs (disable pipx fallback):
 
 ```bash
 CHUTES_PROXY_UV_REQUIRED=1 curl -fsSL https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install | bash
+```
+
+PowerShell equivalent:
+
+```powershell
+$env:CHUTES_PROXY_UV_REQUIRED="1"; irm https://raw.githubusercontent.com/chutesai/chutes-e2ee-proxy/main/install.ps1 | iex
 ```
 
 ## Run
