@@ -243,25 +243,56 @@ IP.2 = ::1
     throw "Failed to generate local TLS cert/key."
 }
 
+function Remove-StaleUVToolArtifacts([string]$uvCmd) {
+    Invoke-NativeQuiet $uvCmd @("tool", "uninstall", "chutes-e2ee-proxy") | Out-Null
+
+    $uvToolDirs = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $uvToolDirs += (Join-Path $env:APPDATA "uv\tools\chutes-e2ee-proxy")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_DATA_HOME)) {
+        $uvToolDirs += (Join-Path $env:XDG_DATA_HOME "uv\tools\chutes-e2ee-proxy")
+    } else {
+        $uvToolDirs += (Join-Path $HOME ".local\share\uv\tools\chutes-e2ee-proxy")
+    }
+    foreach ($dir in $uvToolDirs) {
+        if (-not [string]::IsNullOrWhiteSpace($dir) -and (Test-Path $dir)) {
+            Remove-Item -Path $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $uvTrampolines = @(
+        (Join-Path $HOME ".local\bin\chutes-e2ee-proxy"),
+        (Join-Path $HOME ".local\bin\chutes-e2ee-proxy.exe")
+    )
+    foreach ($trampoline in $uvTrampolines) {
+        if (Test-Path $trampoline) {
+            Remove-Item -Path $trampoline -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Invoke-UVInstallSequence([string]$uvCmd) {
+    if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", $RepoFallback)) { return $true }
+    if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", $RepoFallback)) { return $true }
+
+    Remove-StaleUVToolArtifacts $uvCmd
+
+    if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--force", $RepoFallback)) { return $true }
+    if (Invoke-NativeQuiet $uvCmd @("tool", "install", $RepoFallback)) { return $true }
+
+    if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", "chutes-e2ee-proxy")) { return $true }
+    if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "chutes-e2ee-proxy")) { return $true }
+
+    return $false
+}
+
 function Install-Proxy($pyExec) {
     $uvCmd = Resolve-UVCommand
     if ($uvCmd) {
         Ensure-UVExecutionPolicy
         Write-Log "Installing chutes-e2ee-proxy from GitHub ref '$proxyRef' via uv..."
-        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", $RepoFallback)) { return }
-        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", $RepoFallback)) { return }
-
-        # Corrupt or stale tool environment — uninstall and purge any leftover dirs, then retry.
-        Invoke-NativeQuiet $uvCmd @("tool", "uninstall", "chutes-e2ee-proxy") | Out-Null
-        $uvToolDir = Join-Path $env:APPDATA "uv\tools\chutes-e2ee-proxy"
-        if (Test-Path $uvToolDir) { Remove-Item -Path $uvToolDir -Recurse -Force -ErrorAction SilentlyContinue }
-        $uvTrampoline = Join-Path $HOME ".local\bin\chutes-e2ee-proxy.exe"
-        if (Test-Path $uvTrampoline) { Remove-Item -Path $uvTrampoline -Force -ErrorAction SilentlyContinue }
-        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--force", $RepoFallback)) { return }
-        if (Invoke-NativeQuiet $uvCmd @("tool", "install", $RepoFallback)) { return }
-
-        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "--force", "chutes-e2ee-proxy")) { return }
-        if (Invoke-NativeQuiet $uvCmd @("tool", "install", "--upgrade", "chutes-e2ee-proxy")) { return }
+        if (Invoke-UVInstallSequence $uvCmd) { return }
 
         if ($uvRequired) {
             throw "uv installation is required but failed. Set CHUTES_PROXY_UV_REQUIRED=0 to allow pipx fallback."

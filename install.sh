@@ -216,44 +216,47 @@ install_proxy() {
     uv_required=true
   fi
 
-  add_local_bins_to_path
-  if command -v uv >/dev/null 2>&1; then
-    log "Installing chutes-e2ee-proxy from GitHub ref '${PROXY_REF}' via uv..."
-    local uv_err
-    uv_err="$(mktemp)"
-    if uv tool install --upgrade --force "$REPO_FALLBACK" </dev/null 2>"$uv_err"; then
-      rm -f "$uv_err"
+  try_uv_install_sequence() {
+    if uv tool install --upgrade --force "$REPO_FALLBACK" </dev/null; then
+      return 0
+    fi
+    if uv tool install --upgrade "$REPO_FALLBACK" </dev/null; then
       return 0
     fi
 
-    if grep -qi "Executable already exists: chutes-e2ee-proxy" "$uv_err"; then
-      rm -f "$uv_err"
-      log "Existing chutes-e2ee-proxy executable detected; using pipx upgrade path."
-    else
-      rm -f "$uv_err"
-      if uv tool install --upgrade "$REPO_FALLBACK" </dev/null; then
-        return 0
-      fi
-      # Corrupt or stale tool environment — uninstall and retry from scratch.
-      uv tool uninstall chutes-e2ee-proxy </dev/null 2>/dev/null || true
-      if uv tool install --force "$REPO_FALLBACK" </dev/null; then
-        return 0
-      fi
-      if uv tool install "$REPO_FALLBACK" </dev/null; then
-        return 0
-      fi
-      if uv tool install --upgrade --force chutes-e2ee-proxy </dev/null; then
-        return 0
-      fi
-      if uv tool install --upgrade chutes-e2ee-proxy </dev/null; then
-        return 0
-      fi
-      if [ "$uv_required" = true ]; then
-        echo "uv installation is required but failed. Set CHUTES_PROXY_UV_REQUIRED=0 to allow pipx fallback." >&2
-        exit 1
-      fi
-      log "uv installation failed; falling back to pipx..."
+    # Corrupt or stale uv tool environment — clear known artifacts and retry.
+    uv tool uninstall chutes-e2ee-proxy </dev/null 2>/dev/null || true
+    rm -rf "$HOME/.local/share/uv/tools/chutes-e2ee-proxy" || true
+    rm -f "$HOME/.local/bin/chutes-e2ee-proxy" "$HOME/.local/bin/chutes-e2ee-proxy.exe" || true
+
+    if uv tool install --force "$REPO_FALLBACK" </dev/null; then
+      return 0
     fi
+    if uv tool install "$REPO_FALLBACK" </dev/null; then
+      return 0
+    fi
+
+    if uv tool install --upgrade --force chutes-e2ee-proxy </dev/null; then
+      return 0
+    fi
+    if uv tool install --upgrade chutes-e2ee-proxy </dev/null; then
+      return 0
+    fi
+
+    return 1
+  }
+
+  add_local_bins_to_path
+  if command -v uv >/dev/null 2>&1; then
+    log "Installing chutes-e2ee-proxy from GitHub ref '${PROXY_REF}' via uv..."
+    if try_uv_install_sequence; then
+      return 0
+    fi
+    if [ "$uv_required" = true ]; then
+      echo "uv installation is required but failed. Set CHUTES_PROXY_UV_REQUIRED=0 to allow pipx fallback." >&2
+      exit 1
+    fi
+    log "uv installation failed; falling back to pipx..."
   elif [ "$uv_required" = true ]; then
     echo "uv installation is required but uv is unavailable. Ensure uv is installed and runnable." >&2
     exit 1
