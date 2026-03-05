@@ -64,6 +64,26 @@ def _is_streaming(payload: dict) -> bool:
     return bool(payload.get("stream", False))
 
 
+def _invalidate_nonce_cache_compat(discovery: object, chute_id: str) -> None:
+    invalidate = getattr(discovery, "invalidate_nonce_cache", None)
+    if callable(invalidate):
+        invalidate(chute_id)
+        return
+
+    cache = getattr(discovery, "_nonce_cache", None)
+    if not isinstance(cache, dict):
+        return
+
+    lock = getattr(discovery, "_cache_lock", None)
+    if lock is None:
+        cache.pop(chute_id, None)
+        return
+
+    with suppress(Exception):
+        with lock:
+            cache.pop(chute_id, None)
+
+
 class ProxyAsyncChutesE2EETransport(AsyncChutesE2EETransport):
     def __init__(
         self,
@@ -94,48 +114,18 @@ class ProxyAsyncChutesE2EETransport(AsyncChutesE2EETransport):
         stream = _is_streaming(payload)
         e2e_path = _original_path(request)
         http = await self._get_http()
-        selections = await self._selector.resolve_async(model, http)
-
-        last_overload_response: httpx.Response | None = None
-        last_overload_error: ProxyRequestError | None = None
+        selection = await self._selector.resolve_async(model, http)
         invoke_url = f"{self._api_base}/e2e/invoke"
-
-        for selection in selections:
-            candidate_payload = self._canonicalize_payload(payload, selection)
-            try:
-                response = await self._invoke_candidate(
-                    request=request,
-                    payload=candidate_payload,
-                    selection=selection,
-                    stream=stream,
-                    e2e_path=e2e_path,
-                    invoke_url=invoke_url,
-                    http=http,
-                )
-            except ProxyRequestError as exc:
-                if exc.status_code in (429, 503) and len(selections) > 1:
-                    last_overload_error = exc
-                    continue
-                raise
-
-            if response.status_code in (429, 503) and len(selections) > 1:
-                body = await response.aread()
-                last_overload_response = httpx.Response(
-                    response.status_code,
-                    headers=response.headers,
-                    content=body,
-                    request=request,
-                )
-                await response.aclose()
-                continue
-
-            return response
-
-        if last_overload_response is not None:
-            return last_overload_response
-        if last_overload_error is not None:
-            raise last_overload_error
-        raise ProxyRequestError(503, "model_unavailable", f"no E2EE-capable instances available for {model}")
+        candidate_payload = self._canonicalize_payload(payload, selection)
+        return await self._invoke_candidate(
+            request=request,
+            payload=candidate_payload,
+            selection=selection,
+            stream=stream,
+            e2e_path=e2e_path,
+            invoke_url=invoke_url,
+            http=http,
+        )
 
     def _canonicalize_payload(self, payload: dict, selection: ModelSelection) -> dict:
         if payload.get("model") == selection.model_id:
@@ -189,7 +179,7 @@ class ProxyAsyncChutesE2EETransport(AsyncChutesE2EETransport):
                 )
 
             if attempt == 0 and await _should_retry_nonce_rejection_async(response):
-                self._discovery.invalidate_nonce_cache(selection.chute_id)
+                _invalidate_nonce_cache_compat(self._discovery, selection.chute_id)
                 await response.aclose()
                 continue
             return response

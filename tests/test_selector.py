@@ -11,11 +11,9 @@ class FakeAsyncClient:
         *,
         models: list[dict],
         aliases: list[dict] | None = None,
-        stats: list[dict] | None = None,
     ) -> None:
         self.models = models
         self.aliases = aliases or []
-        self.stats = stats or []
         self.urls: list[str] = []
 
     async def get(
@@ -31,8 +29,6 @@ class FakeAsyncClient:
             return httpx.Response(200, request=request, json={"data": self.models})
         if url.endswith("/model_aliases/"):
             return httpx.Response(200, request=request, json=self.aliases)
-        if url.endswith("/invocations/stats/llm"):
-            return httpx.Response(200, request=request, json=self.stats)
         raise AssertionError(url)
 
 
@@ -58,19 +54,18 @@ async def test_selector_resolves_exact_ids_roots_and_chute_ids() -> None:
     by_root = await selector.resolve_async("zai-org/GLM-5", client)
     by_chute = await selector.resolve_async("chute-glm5", client)
 
-    assert by_id[0].model_id == "zai-org/GLM-5-TEE"
-    assert by_root[0].model_id == "zai-org/GLM-5-TEE"
-    assert by_chute[0].model_id == "zai-org/GLM-5-TEE"
+    assert by_id.model_id == "zai-org/GLM-5-TEE"
+    assert by_root.model_id == "zai-org/GLM-5-TEE"
+    assert by_chute.model_id == "zai-org/GLM-5-TEE"
 
 
 @pytest.mark.asyncio
-async def test_selector_expands_aliases_with_ordered_deduplication() -> None:
+async def test_selector_resolves_single_target_alias() -> None:
     client = FakeAsyncClient(
         models=[
             {"id": "model-a", "root": "model-a", "created": 1, "chute_id": "chute-a"},
-            {"id": "model-b", "root": "model-b", "created": 1, "chute_id": "chute-b"},
         ],
-        aliases=[{"alias": "default", "chute_ids": ["chute-a", "chute-b", "chute-a"]}],
+        aliases=[{"alias": "default", "chute_ids": ["chute-a"]}],
     )
     selector = ModelSelector(
         model_api_base="https://llm.example",
@@ -80,23 +75,17 @@ async def test_selector_expands_aliases_with_ordered_deduplication() -> None:
 
     resolved = await selector.resolve_async("default", client)
 
-    assert [(item.model_id, item.chute_id) for item in resolved] == [
-        ("model-a", "chute-a"),
-        ("model-b", "chute-b"),
-    ]
+    assert (resolved.model_id, resolved.chute_id) == ("model-a", "chute-a")
 
 
 @pytest.mark.asyncio
-async def test_selector_ranks_comma_lists_by_throughput() -> None:
+async def test_selector_rejects_multi_target_alias() -> None:
     client = FakeAsyncClient(
         models=[
             {"id": "model-a", "root": "model-a", "created": 1, "chute_id": "chute-a"},
             {"id": "model-b", "root": "model-b", "created": 1, "chute_id": "chute-b"},
         ],
-        stats=[
-            {"chute_id": "chute-a", "average_tps": 12.5, "average_ttft": 1.4},
-            {"chute_id": "chute-b", "average_tps": 44.0, "average_ttft": 0.8},
-        ],
+        aliases=[{"alias": "default", "chute_ids": ["chute-a", "chute-b"]}],
     )
     selector = ModelSelector(
         model_api_base="https://llm.example",
@@ -104,9 +93,29 @@ async def test_selector_ranks_comma_lists_by_throughput() -> None:
         api_key="cpk_test",
     )
 
-    resolved = await selector.resolve_async("model-a,model-b:throughput", client)
+    with pytest.raises(ProxyRequestError, match="single resolved model target"):
+        await selector.resolve_async("default", client)
 
-    assert [item.model_id for item in resolved] == ["model-b", "model-a"]
+
+@pytest.mark.asyncio
+async def test_selector_rejects_comma_and_metric_selectors() -> None:
+    client = FakeAsyncClient(
+        models=[
+            {"id": "model-a", "root": "model-a", "created": 1, "chute_id": "chute-a"},
+            {"id": "model-b", "root": "model-b", "created": 1, "chute_id": "chute-b"},
+        ]
+    )
+    selector = ModelSelector(
+        model_api_base="https://llm.example",
+        api_base="https://api.example",
+        api_key="cpk_test",
+    )
+
+    with pytest.raises(ProxyRequestError, match="single resolved model target"):
+        await selector.resolve_async("model-a,model-b", client)
+
+    with pytest.raises(ProxyRequestError, match="single resolved model target"):
+        await selector.resolve_async("model-a:throughput", client)
 
 
 @pytest.mark.asyncio

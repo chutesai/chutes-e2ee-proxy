@@ -139,8 +139,8 @@ Runs local checks for Python version, `chutes-e2ee` importability, cloudflared a
 4. Streams upstream response bytes back to caller.
 5. Upstream 4xx/5xx pass through unchanged (status, body bytes, and safe headers).
 6. The proxy app forwards request bytes unchanged; model normalization happens only inside the E2EE transport boundary that already parses payloads for encryption.
-7. The E2EE transport caches live `/v1/models`, `/model_aliases/`, and LLM stats in memory so clients can keep using normal Chutes model selectors.
-8. Exact model ids, public roots, chute ids, aliases, ordered failover lists, and metric-ranked selectors such as `:latency` and `:throughput` are resolved dynamically with no hardcoded model tables.
+7. The E2EE transport caches live `/v1/models` and `/model_aliases/` in memory so single-target selectors resolve without hardcoded model tables.
+8. Exact model ids, public roots, chute ids, and single-target aliases are supported. Comma-separated failover selectors, multi-target aliases, and `:latency` / `:throughput` routing are intentionally unsupported in the E2EE path.
 
 `--upstream` is the client-facing OpenAI-compatible base (for example `https://llm.chutes.ai`), while `--e2e-upstream` is where `/e2e/*` is reached (for example `https://api.chutes.ai`).
 

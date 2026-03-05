@@ -1,10 +1,12 @@
 import json
+import threading
 import types
 
 import httpx
 import pytest
 
 import chutes_e2ee_proxy.proxy_transport as proxy_transport
+from chutes_e2ee_proxy.errors import ProxyRequestError
 from chutes_e2ee_proxy.proxy_transport import ProxyAsyncChutesE2EETransport
 
 
@@ -12,9 +14,8 @@ def _mock_response(url: str, payload: dict | list, status_code: int = 200) -> ht
     return httpx.Response(status_code, request=httpx.Request("GET", url), json=payload)
 
 
-def _build_transport(*, models: list[dict], aliases: list[dict] | None = None, stats: list[dict] | None = None):
+def _build_transport(*, models: list[dict], aliases: list[dict] | None = None):
     aliases = aliases or []
-    stats = stats or []
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -22,8 +23,6 @@ def _build_transport(*, models: list[dict], aliases: list[dict] | None = None, s
             return _mock_response(url, {"data": models})
         if url.endswith("/model_aliases/"):
             return _mock_response(url, aliases)
-        if url.endswith("/invocations/stats/llm"):
-            return _mock_response(url, stats)
         if "/e2e/instances/" in url:
             chute_id = url.rsplit("/", 1)[-1]
             return _mock_response(
@@ -50,18 +49,13 @@ def _build_transport(*, models: list[dict], aliases: list[dict] | None = None, s
 
 
 @pytest.mark.asyncio
-async def test_transport_normalizes_ranked_selector_inside_e2ee_boundary(
+async def test_transport_normalizes_single_root_inside_e2ee_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = _build_transport(
         models=[
-            {"id": "model-a", "root": "model-a", "created": 1, "chute_id": "chute-a"},
-            {"id": "model-b", "root": "model-b", "created": 1, "chute_id": "chute-b"},
-        ],
-        stats=[
-            {"chute_id": "chute-a", "average_tps": 12.0, "average_ttft": 0.9},
-            {"chute_id": "chute-b", "average_tps": 44.0, "average_ttft": 0.8},
-        ],
+            {"id": "model-a-tee", "root": "model-a", "created": 1, "chute_id": "chute-a"},
+        ]
     )
     captured: list[dict] = []
 
@@ -83,7 +77,7 @@ async def test_transport_normalizes_ranked_selector_inside_e2ee_boundary(
     transport._handle_non_stream = types.MethodType(fake_handle_non_stream, transport)
 
     original_body = json.dumps(
-        {"model": "model-a,model-b:throughput", "messages": [{"role": "user", "content": "hi"}]}
+        {"model": "model-a", "messages": [{"role": "user", "content": "hi"}]}
     ).encode()
     request = httpx.Request(
         "POST",
@@ -95,17 +89,17 @@ async def test_transport_normalizes_ranked_selector_inside_e2ee_boundary(
     response = await transport.handle_async_request(request)
 
     assert response.status_code == 200
-    assert response.json()["chute_id"] == "chute-b"
+    assert response.json()["chute_id"] == "chute-a"
     assert request.content == original_body
     assert captured == [
-        {"model": "model-b", "messages": [{"role": "user", "content": "hi"}]}
+        {"model": "model-a-tee", "messages": [{"role": "user", "content": "hi"}]}
     ]
 
     await transport.aclose()
 
 
 @pytest.mark.asyncio
-async def test_transport_fails_over_to_next_candidate_on_503(
+async def test_transport_rejects_multi_model_selector(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = _build_transport(
@@ -114,24 +108,70 @@ async def test_transport_fails_over_to_next_candidate_on_503(
             {"id": "model-b", "root": "model-b", "created": 1, "chute_id": "chute-b"},
         ]
     )
-    attempted_models: list[str] = []
-    attempted_chutes: list[str] = []
+
+    build_calls = 0
+
+    def fake_build(_pubkey, payload):
+        nonlocal build_calls
+        _ = payload
+        build_calls += 1
+        return types.SimpleNamespace(blob=b"blob", response_sk=b"sk")
+
+    monkeypatch.setattr(proxy_transport, "build_e2ee_request", fake_build)
+
+    request = httpx.Request(
+        "POST",
+        "https://llm.example/v1/chat/completions",
+        json={"model": "model-a,model-b:throughput", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    with pytest.raises(ProxyRequestError, match="single resolved model target"):
+        await transport.handle_async_request(request)
+
+    assert build_calls == 0
+    await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_transport_nonce_retry_works_without_invalidate_nonce_cache_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _build_transport(
+        models=[
+            {"id": "model-a", "root": "model-a", "created": 1, "chute_id": "chute-a"},
+        ]
+    )
+
+    class LegacyDiscovery:
+        def __init__(self) -> None:
+            self._nonce_cache = {"chute-a": object()}
+            self._cache_lock = threading.Lock()
+            self.calls = 0
+
+        async def get_nonce_async(self, chute_id: str, client: httpx.AsyncClient):
+            _ = chute_id, client
+            self.calls += 1
+            return (
+                types.SimpleNamespace(instance_id=f"inst-{self.calls}", e2e_pubkey="pubkey"),
+                f"nonce-{self.calls}",
+            )
+
+    legacy_discovery = LegacyDiscovery()
+    transport._discovery = legacy_discovery
 
     monkeypatch.setattr(
         proxy_transport,
         "build_e2ee_request",
-        lambda _pubkey, payload: attempted_models.append(payload["model"])
-        or types.SimpleNamespace(blob=b"blob", response_sk=b"sk"),
+        lambda _pubkey, payload: types.SimpleNamespace(blob=b"blob", response_sk=b"sk"),
     )
 
     async def fake_handle_non_stream(self, url, headers, blob, response_sk, original_request):
         _ = url, blob, response_sk
-        attempted_chutes.append(headers["X-Chute-Id"])
-        if headers["X-Chute-Id"] == "chute-a":
+        if headers["X-E2E-Nonce"] == "nonce-1":
             return httpx.Response(
-                503,
+                403,
                 request=original_request,
-                json={"detail": "Instance is at maximum capacity, try again later"},
+                content=b"Invalid, expired, or already-used nonce",
             )
         return httpx.Response(200, request=original_request, json={"ok": True})
 
@@ -140,13 +180,13 @@ async def test_transport_fails_over_to_next_candidate_on_503(
     request = httpx.Request(
         "POST",
         "https://llm.example/v1/chat/completions",
-        json={"model": "model-a,model-b", "messages": [{"role": "user", "content": "hi"}]},
+        json={"model": "model-a", "messages": [{"role": "user", "content": "hi"}]},
     )
 
     response = await transport.handle_async_request(request)
 
     assert response.status_code == 200
-    assert attempted_models == ["model-a", "model-b"]
-    assert attempted_chutes == ["chute-a", "chute-b"]
+    assert legacy_discovery.calls == 2
+    assert legacy_discovery._nonce_cache == {}
 
     await transport.aclose()
