@@ -36,6 +36,7 @@ RESPONSE_HOP_BY_HOP = {
     "transfer-encoding",
     "keep-alive",
     "content-length",
+    "content-encoding",
 }
 
 

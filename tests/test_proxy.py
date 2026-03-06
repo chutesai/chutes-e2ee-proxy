@@ -23,6 +23,22 @@ class FakeStream(httpx.AsyncByteStream):
         return
 
 
+class FakeDecodedResponse:
+    def __init__(self, status_code: int, headers: dict[str, str], body: bytes):
+        self.status_code = status_code
+        self.headers = httpx.Headers(headers)
+        self._body = body
+
+    async def aiter_bytes(self) -> AsyncIterator[bytes]:
+        yield self._body
+
+    async def aread(self) -> bytes:
+        return self._body
+
+    async def aclose(self) -> None:
+        return
+
+
 class FakeTransport:
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
@@ -170,6 +186,28 @@ async def test_public_models_allows_no_auth(settings: Settings, fake_pool: FakeP
 
 
 @pytest.mark.asyncio
+async def test_public_models_strips_content_encoding_header(
+    settings: Settings, fake_pool: FakePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_send_plain(request, upstream_url: str, headers: dict[str, str], body: bytes) -> httpx.Response:
+        return FakeDecodedResponse(
+            200,
+            {"content-type": "application/json", "content-encoding": "gzip"},
+            b'{"data":[{"id":"model-1"}]}',
+        )
+
+    monkeypatch.setattr(app_module, "_send_plain_upstream_request", fake_send_plain)
+    app = create_app(settings, fake_pool, FakeTunnel(), lambda: None)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/v1/models")
+
+    assert response.status_code == 200
+    assert response.json()["data"][0]["id"] == "model-1"
+    assert "content-encoding" not in response.headers
+
+
+@pytest.mark.asyncio
 async def test_non_stream_body_passthrough(app, fake_pool: FakePool) -> None:
     transport = await fake_pool.get("token-1")
     transport.response = httpx.Response(200, json={"ok": True})
@@ -189,6 +227,23 @@ async def test_non_stream_body_passthrough(app, fake_pool: FakePool) -> None:
     sent = transport.requests[0]
     assert sent.url == httpx.URL("https://llm.chutes.ai/v1/chat/completions?x=1")
     assert sent.content == body
+
+
+@pytest.mark.asyncio
+async def test_non_stream_success_strips_content_encoding(app, fake_pool: FakePool) -> None:
+    transport = await fake_pool.get("token-gzip")
+    transport.response = FakeDecodedResponse(
+        200,
+        {"content-type": "application/json", "content-encoding": "gzip"},
+        b'{"ok":true}',
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/v1/models", headers={"Authorization": "Bearer token-gzip"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert "content-encoding" not in response.headers
 
 
 @pytest.mark.asyncio
